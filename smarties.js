@@ -12,10 +12,11 @@
 * @depends BetterEvents
 * @depends BetterUtil.common (bu-common)
 *
-* @exports {function} Call this function with an object containing the dependencies. It returns an object
-*                     with props: Object, Array, isSmart, create, autoLinkUniSoc. ProTid: ctrl+f '@exported'
-*					  to see where they are each defined. NOTE: In the browser you it's enough to load this
-*					  script after having loaded the dependencies to have it "self-initialize" as window.smart
+* @exports {function} Call this function with an object containing the dependencies. It returns an object with props: 
+*                        Object, Array, isSmart, create, autoLinkUniSoc. 
+* @protip: ctrl+f '@exported' to see the definitions of the exported. 
+* @protip: In the browser you it's enough to load this script after having loaded the dependencies to have it 
+*          "self-initialize" as window.smart
 */
 
 
