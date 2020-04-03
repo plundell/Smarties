@@ -3,7 +3,7 @@
 //simpleSourceMap2=/lib/smart.class.js
 /*
 * @module smarties
-* @author x7dude
+* @author plundell
 * @license GPLv3 
 * @description Create objects and arrays that are 'smart'. Mainly they emit when you change something on them, 
 *              but they can also control what is set on them, as well as return to previous states.
