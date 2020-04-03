@@ -8,40 +8,38 @@
 * @description Create objects and arrays that are 'smart'. Mainly they emit when you change something on them, 
 *              but they can also control what is set on them, as well as return to previous states.
 *
-* @depends BetterLog
-* @depends BetterEvents
-* @depends BetterUtil.common (bu-common)
+* @depends libbetter {BetterLog,BetterEvents,BetterUtil}
 *
 * @exports {function} Call this function with an object containing the dependencies. It returns an object with props: 
 *                        Object, Array, isSmart, create, autoLinkUniSoc. 
 * @protip: ctrl+f '@exported' to see the definitions of the exported. 
-* @protip: In the browser you it's enough to load this script after having loaded the dependencies to have it 
-*          "self-initialize" as window.smart
+* @protip: In the browser you can load this file after its dependency 'libbetter' to automatically initialize it on 
+*          the window, like so:
+*                <script src="path/to/libbetter.js">
+*                <script src="path/to/smarties.js">
+*      
 */
 
 
 
-(function(globalObj){
+(function(){
     
-    if (typeof module === 'object' && module.exports){
+    if(typeof module==='object' && module.exports){
         module.exports = exportSmarties
-    }else {
-        globalObj.Smarties=exportSmarties;
-
-    	//If the dependent modules have already been loaded and set on the globalObj (eg. the browser window)
-    	//then we might as well export the actual class right away
-    	if(globalObj.smart==undefined && globalObj.BetterLog && globalObj.BetterEvents && globalObject.BetterUtil){
-    		globalObj.smart=exportSmarties(globalObj);
-    	}
     }
 
+	//If libbetter has already been loaded onto the window then initiate Smarties as well
+    if(window && !window.Smarties && window.BetterLog && window.BetterEvents && window.BetterUtil){
+    	window.Smarties=exportSmarties(window);
+    }
+   
 
 	function exportSmarties(dep={}){
 		
 		function missingDependency(which){throw new Error("Missing dependency for smart.class.js: "+which);}
-		const cX =  dep.BetterUtil || dep.cX || (dep.util && dep.util.cX ? dep.util.cX : dep.util) || missingDependency('BetterUtil');
-		const BetterLog = dep.BetterLog                  || missingDependency('BetterLog');
-		const BetterEvents = dep.BetterEvents            || missingDependency('BetterEvents');
+		const BetterLog = dep.BetterLog        || missingDependency('BetterLog');
+		const BetterEvents = dep.BetterEvents  || missingDependency('BetterEvents');
+		const cX = dep.BetterUtil              || missingDependency('BetterUtil');
 
 
 		//Passed around internally to tell a function not to log it's actions (because the calling function 
@@ -2918,6 +2916,6 @@
 
 	}
 
-}(typeof window !== 'undefined' ? window : this || {}));
+}());
 //simpleSourceMap=
 //simpleSourceMap2=
