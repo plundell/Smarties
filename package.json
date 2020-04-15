@@ -1,6 +1,6 @@
 {
   "name": "smarties"
-  ,"version": "1.0.1"
+  ,"version": "1.0.2"
   ,"description": "Javascript objects and arrays that vet input and emit changes"
   ,"scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
@@ -13,6 +13,6 @@
     ,"url": "git+https://github.com/plundell/smarties.git"
   }
   ,"dependencies":{
-  	"libbetter":"^1.0.0"
+  	"libbetter":"1.0.x"
   }
 }
