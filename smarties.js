@@ -24,13 +24,30 @@
 
 (function(){
     
+    //Export if possible
     if(typeof module==='object' && module.exports){
         module.exports = exportSmarties
     }
 
-	//If libbetter has already been loaded onto the window then initiate Smarties as well
-    if(window && !window.Smarties && window.BetterLog && window.BetterEvents && window.BetterUtil){
-    	window.Smarties=exportSmarties(window);
+	//Set on window if it exists and hasn't already been set
+    if(window && !window.Smarties){
+
+	    //Create a getter on the window which runs the exporter as soon as all dependencies are
+	    //available OR throws a clear error if we try to access it too early
+	    Object.defineProperty(window,'Smarties',{enumerable:true, configurable:true
+	    	,get:()=>{
+	    		if(window.BetterLog && window.BetterEvents && window.BetterUtil){ 
+	    			return window.Smarties=exportSmarties(window);
+	    		}else{
+	    			throw new Error("E_DEPENDENCY. Smarties depends on libbetter which should be set on the window.");
+	    		}
+	    	}
+	    	//This setter allows^ the whole thing to easily be undone/overwritten
+	    	,set:(val)=>{
+	    		Object.defineProperty(window,'Smarties',{value:val,enumerable:true,writable:true,configurable:true}); 
+	    		return val;
+	    	} 
+	    })
     }
    
 
@@ -102,6 +119,8 @@
 
 			,debounce:0 	//If >0, .set() will be delayed by that many ms, and any additional calls during that time will
 							//push the delay further and .set() will only be called with the last value.
+
+			//TODO 2020-04-15: add 'throttle' just like we've got debounce^
 		};
 
 
@@ -182,15 +201,29 @@
 			}
 
 
-			//If we want to debounce set()
+			//If we want to debounce set() for this instance all we have to do is supercede prototype.set 
+			//with a debounced version on 'this'. 
 			if(this._private.options.debounce){
-				//Supercede prototype.set with a debounced version. If you want to revert you just have to remove that prop
+
+				if(this._private.options.throttle){
+					this._log.warn("You can't use both 'debounce' and 'throttle', disabling the latter");
+					delete this._private.options.throttle;
+				}
+
 				Object.defineProperty(this,'set',{
 					enumerable:true
 					,configurable:true
-					,value:cX.betterTimeout(this.private.options.debounce,this.set).debounce.bind(this)
+					,value:cX.betterTimeout(this._private.options.debounce,this.set).debounce.bind(this)
+				})
+			}else if(this._private.options.throttle){
+				Object.defineProperty(this,'set',{
+					enumerable:true
+					,configurable:true
+					,value:cX.betterTimeout(this._private.options.throttle,this.set).throttle.bind(this)
 				})
 			}
+			//REMEMBER: If you want to revert you just have to remove this.set
+
 
 
 			//If we want to add getters, chances are good that we want all enumerable props to be getters (ie. that
@@ -440,7 +473,7 @@
 				var errMsg='Failed to '
 				var c=this._private.options.children; //shortcut
 
-				if(evt=='new'){
+				if(event.evt=='new'){
 					if(arguments[2]!=NO_LOG_TOKEN)
 						this._log.trace(`Setting new key '${x.keyStr}' to: ${cX.logVar(x.newValue)}`);
 
@@ -710,8 +743,7 @@
 		* Emits 3 events instead of one, so users can easily listen the way the want 
 		*
 		*
-		* @param string name 		Name of the event to emit
-		* @param object details 		An object with all the details about the event
+		* @param object event 		An object with all the details about the event
 		*
 		* @emit 'event'
 		* @emit 'new'
@@ -723,15 +755,15 @@
 		* @return void 			  
 		* @call(<SmartProto>)
 		*/
-		function tripleEmit(name,details){
-			if(Array.isArray(details.key))
-				details.key.toString=function(){return this.join('.')}; //So we can always handle like string
+		function tripleEmit(event){
+			if(Array.isArray(event.key))
+				event.key.toString=function(){return this.join('.')}; //So we can always handle like string
 
-			this.emit.call(this,name,details);
-			this.emit.call(this,'event',name,details);
+			this.emit.call(this,event.evt,event);
+			this.emit.call(this,'event',event);
 			
-			let key='_'+details.key;//leading '_' in case keys have unsuitable names like 'change' or 'new'
-			this.emit.call(this,key,details); 
+			let key='_'+event.key;//leading '_' in case keys have unsuitable names like 'change' or 'new'
+			this.emit.call(this,key,event); 
 			return;
 		}
 
@@ -1356,7 +1388,7 @@
 							.changeLvl('warn').exec();
 						this._private.options.defaultValues=null;
 					}else{
-						this.reset(undefined,'log_init'); //true=log 'initializing'
+						this.reset(undefined,'log_init'); //log_init...
 					}
 
 			}
@@ -1414,15 +1446,14 @@
 				}
 				
 
-				//Do the actual setting, and check if we're setting a smart child...
-				if(commonSet.call(this,x,event,arguments[3])!=='changed_smart'){
-					//...in which case that smart child would run the following vv
-					
+				//Do the actual setting. If we're setting a smart child then...
+				var emitHere=commonSet.call(this,x,event,arguments[3]);
+				if(emitHere){
+					//...this block would run in it, else we run it here...
 
 					//Property was added, so add getter on this object. Do this after we've successfully set
 					if(event=='new' && this._private.options.addGetters)
 						this._setPublicGetter(x.localKey);
-
 					
 					tripleEmit.call(this,event);
 						//^fullKey can be array if we changed nested complex
@@ -1455,7 +1486,7 @@
 					if(this._private.options.children=='smart' && typeof oldValue=='object'){
 						this._private.deleteSmartChild(key,arguments[2]); //will also log unless arg#2
 					}else{
-						if(arguments[2]!=NO_LOG_TOKEN])
+						if(arguments[2]!=NO_LOG_TOKEN)
 							this._log.trace(`Deleting key '${key}':`,cX.logVar(oldValue));
 						delete this._private.data[key];
 					}
@@ -1595,6 +1626,26 @@
 				return;
 			}
 
+
+			/*
+			* Similar to .assign() except it only sets those values where the keys don't already exist
+			*
+			* @param function fn
+			*
+			* @return object|undefined 		If no changes occured then undefined is returned. Else an object with same keys
+			*								as @obj for those values that have changed. Values are the old values
+			*/
+			SmartObject.prototype.fillOut=function(obj){
+				cX.checkType('object',obj);
+				var excluded=cX.extract(obj,this.keys(),'excludeMissing');
+				if(Object.keys(obj).length){
+					this._log.debug("Ignoring the keys that already exists:",excluded);
+					return this.assign(obj);
+				}else{
+					this._log.debug("All keys already exists:",excluded);
+					return undefined;
+				}
+			}
 
 
 
@@ -1765,7 +1816,8 @@
 
 
 				//Do the actual setting, and check if we're setting a smart child...
-				if(commonSet.call(this,x,event,arguments[3])!=='changed_smart'){
+				var emitHere=commonSet.call(this,x,event,arguments[3]);
+				if(emitHere){
 					//...in which case that child will run the following...
 					
 					//The array just got longer, add an enumerable getter to this object. Do this after we've succesfully set
@@ -1820,7 +1872,7 @@
 				if(this._private.options.addGetters)
 					delete this[this.length];//yes, call this.length again...
 
-				tripleEmit.call(this,Object.assign(event,{evt:'delete',key:i,old:oldValue});
+				tripleEmit.call(this,Object.assign(event,{evt:'delete',key:i,old:oldValue,value:undefined}));
 				return oldValue;
 
 			}

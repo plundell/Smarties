@@ -1,6 +1,6 @@
 {
   "name": "smarties"
-  ,"version": "1.0.0"
+  ,"version": "1.0.1"
   ,"description": "Javascript objects and arrays that vet input and emit changes"
   ,"scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
