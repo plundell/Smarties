@@ -30,7 +30,7 @@
     }
 
 	//Set on window if it exists and hasn't already been set
-    if(window && !window.Smarties){
+    if(typeof window=='object' && window && !window.Smarties){
 
 	    //Create a getter on the window which runs the exporter as soon as all dependencies are
 	    //available OR throws a clear error if we try to access it too early
@@ -53,13 +53,15 @@
 
 	function exportSmarties(dep={}){
 		
-		function missingDependency(which){throw new Error("Missing dependency for smart.class.js: "+which);}
+		function missingDependency(which){throw new Error("Missing dependency for smarties.js: "+which);}
 		const BetterLog = dep.BetterLog        || missingDependency('BetterLog');
 		const BetterEvents = dep.BetterEvents  || missingDependency('BetterEvents');
-		const cX = dep.BetterUtil              || missingDependency('BetterUtil');
+		const BetterUtil = dep.BetterUtil      || missingDependency('BetterUtil');
+		const cX=(BetterUtil.cX ? BetterUtil.cX : BetterUtil);
+// console.log('AAAAAAAAAAAAAAAAAAAAAAA');
+// console.log(BetterEvents);
 
-
-		//Passed around internally to tell a function not to log it's actions (because the calling function 
+		//A token passed around internally to tell a function not to log it's actions (because the calling function 
 		//has already done so)
 		const NO_LOG_TOKEN={}
 
@@ -71,10 +73,13 @@
 		function isSmart(x){
 			x=x||this;
 			if(x && typeof x=='object'){
-				if(x.constructor.name=='SmartObject')
-					return 'SmartObject'
-				else if(x.constructor.name=='SmartArray')
-					return 'SmartArray';
+				while(x.__proto__){
+					x=x.__proto__;
+					if(x.constructor.name=='SmartObject')
+						return 'SmartObject'
+					else if(x.constructor.name=='SmartArray')
+						return 'SmartArray';
+				}
 			}
 			return undefined
 		}
@@ -84,7 +89,14 @@
 
 		SmartProto.defaultOptions={
 		//Used by SmartProto
-			defaultValues:null
+			defaultValues:null 	//Default values which are set by .reset() (which is called by constructor). Will be ignored if
+								  //$meta is passed
+			,meta:null 			//An object, if passed when creating an object it will run .init() at the end of the constructor. 
+								  //Keys are default keys created by constructor, values are rules about that prop
+			,onlyMeta:false 	//If true, only keys from $meta are allowed
+
+			,constantType:false //If true, when a key is set, it can only be changed to the same type or deleted
+
 			,delayedSnapshot:0 	  //If set to number>0, a copy of all the data on the object will be emitted that many ms after 
 								  //any event
 			,children:'primitive' //accepted 'complex'=> allow obj/arr children (they should not be smart), 'smart'=> children 
@@ -96,7 +108,7 @@
 			,getLive:false      //if true, get() will return a 'live' value (only relevant if children=complex)
 
 		//Used if sending the smarty over a uniSoc
-			,Tx:undefined 	//local changes will be sent over uniSoc if this object is sent
+			,Tx:undefined 	//local changes will be sent over uniSoc if this prop is set
 			,Rx:undefined   //changes coming from the other side of a uniSoc will be applied to the local object
 
 	//TODO 2020-02-27: We probably want to disable .set() if a linked object is created where we only
@@ -120,7 +132,10 @@
 			,debounce:0 	//If >0, .set() will be delayed by that many ms, and any additional calls during that time will
 							//push the delay further and .set() will only be called with the last value.
 
-			//TODO 2020-04-15: add 'throttle' just like we've got debounce^
+			,throttle:0 	//If >0, .set() will ignore calls for this many ms after a call. NOTE: The last value will still be
+							//set after the timeout
+
+
 		};
 
 
@@ -129,29 +144,34 @@
 		/*
 		* @constructor SmartProto 	Prototype for several objects in this folder
 		*/
-		function SmartProto(options){	
-			// log.highlight('green','SETUP '+this.constructor.name, this._private);
-			var self=this;
+		function SmartProto(_options){	
+			Object.defineProperty(this,'isSmart',{value:this.constructor.name});
 
-			BetterEvents.call(this);
+			//Combine default options
+			var options=Object.assign({},SmartProto.defaultOptions,this.constructor.defaultOptions,_options); 
+
+			//Grab the options relating to BetterEvents and call that constructor (to setup inheritence)
+			let beOptions=cX.subObj(options,Object.keys(BetterEvents.defaultOptions),'excludeMissing');
+			BetterEvents.call(this,beOptions);
 
 
 			//Set private variable that holds everything we need to access in various prototype methods, 
 			//without making it enumerable so it doesn't show up when logging
-			Object.defineProperty(this,'_private',{enumerable:false,value:{ //remember, non-enumerable because we
-				data:null 													//use enumerable getters for all values
-				,options:options //SmartArray & SmartOptions have already made sure this object contains everything...
+			Object.defineProperty(this,'_private',{enumerable:false,value:{ 
+				data:(this.isSmart=='SmartObject' ? {} : [])					
+				,options:options
 			}}); 
 
-			//Make sure defaults it's not empty (in each constructor later we make sure it's the right type)
-			if(cX.isEmpty(this._private.options.defaultValues))
-				delete this._private.options.defaultValues
-			
-			//setup log, passing along the options ^^
-			let log=new BetterLog(this,this._private.options);
-			Object.defineProperty(this,'_log',{enumerable:false,value:log}); //remember, non-enumerable because we 
-																			 //use enumerable getters for all values
+
+			//Setup log, passing along the options ^^
+			let logOptions=cX.subObj(options,Object.keys(BetterLog.defaultOptions),'excludeMissing');
+			// console.log({options,logOptions})
+			let log=new BetterLog(this,logOptions);
+			Object.defineProperty(this,'_log',{enumerable:false,value:log});
+			this._log.makeEntry('trace',`Creating smarty '${this._log.name}'`,_options).changeWhere(2).exec();
 			this._betterEvents.onerror=log.error;
+
+
 
 			//Add snapshot if opted
 			let d=this._private.options.delayedSnapshot;
@@ -160,6 +180,8 @@
 			}else if(d!==0){
 				this._log.warn("Bad value for option 'delayedSnapshot':",d,this);
 			}
+
+
 
 			//Prepare for different children types
 			switch(this._private.options.children){
@@ -184,8 +206,12 @@
 					this._log.throw("BUGBUG: invalid valud for option 'children': ",this._private.options.children,this);
 			}
 
+
+
 			//"states" are pre-defined objects which can be assigned using only a keyword 
 			this._private.states={}
+
+
 
 			//If we're using a lookup table...
 			if(this._private.options.valueLookup){
@@ -242,6 +268,59 @@
 			}
 
 
+
+			//For the sake of not confusing which takes presidence, meta[key].default or defaultValues[key] we simply
+			//don't allow both to be passed
+			if(cX.isEmpty(this._private.options.meta))this._private.options.meta=null
+			if(cX.isEmpty(this._private.options.defaultValues))this._private.options.defaultValues=null
+			if(this._private.options.meta && this._private.options.defaultValues)
+				this._log.makeError("You cannot set both options.meta & options.defaultValues. options:",this._private.options).throw('EINVAL')
+			else if(this._private.options.meta && typeof this._private.options.meta!='object')
+				this._log.throwType("options.meta to be object/array",this._private.options.meta);
+			else if(this._private.options.defaultValues && typeof this._private.options.defaultValues!='object')
+				this._log.throwType("options.defaultValues to be object/array",this._private.options.defaultValues);
+
+
+			//If we got meta...
+			if(this._private.options.meta){
+				this._private.options.defaultValues={};
+				
+				//Get the default of defaults
+				let d=this.getMeta('*');
+				d=(d && d.hasOwnProperty('default')?d.default:null);
+
+				for(let key of Object.keys(this._private.options.meta)){
+					let meta=this._private.options.meta[key];
+					//Set the default value on...
+					this._private.options.defaultValues[key]=(meta.hasOwnProperty('default') ? meta.default : d);
+
+					//Make sure that some props are correct/work together
+						if(meta.prepend){
+							if(meta.type && meta.type!='string')
+								this._log.makeError("If using meta.prepend then meta.type needs to be string, not:",meta.type).throw('EMISMATCH');
+							meta.type='string';
+						}
+
+						cX.checkType(['undefined','function'],meta.cleanFunc);
+				}
+			}
+
+			//Now check for defaults (which may just have been set ^)
+			try{
+				if(this._private.options.defaultValues){
+					this._log.debug('Initializing default values:',this._private.options.defaultValues);
+					for(let key of Object.keys(this._private.options.defaultValues)){
+						this.set(key,this._private.options.defaultValues[key]);
+					  	  //^this will emit events, but since this function is run from constructor, no listeners have been added yet
+					  	  //^any bad default values will make .set() throw like normal (.meta restrictions are applied by .set)
+					}
+				}
+			}catch(err){
+				this._log.makeError('Failed to init default values.',err).throw();
+			}
+
+
+
 		}
 		//Inheritence step 2: 
 		// 		https://developer.mozilla.org/en-US/docs/Learn/JavaScript/Objects/Inheritance
@@ -283,6 +362,9 @@
 		* The string version of a smarty is a JSON string
 		*/
 		SmartProto.prototype.toString=function(){
+			if(!isSmart(this)){
+				throw new Error('SmartProto.toString() called in wrong context. this.constructor.name: '+this.constructor.name);
+			}
 			return JSON.stringify(this._private.data);
 		}
 
@@ -373,17 +455,21 @@
 		function commonPrepareSet(key,value,event){
 			// this._log.traceFunc(arguments);
 			try{
-				//Start by setting key/value on event...
+				//Start by checking basic types
+				var [kType,vType]=cX.checkTypes(this._private.expectedTypes,[key,value])
+				
+				//If further meta options have been set, apply those too (yes, this may do a second type check but otherwise
+				//we would have to check if a meta[key].default was set, else use expectedTypes, and we'd have to worry about
+				//setting vType... just make it easy on ourselves)
+				if(this._private.options.meta){
+					value=applyMeta.call(this,key,value);
+				}
+
+				//Now that we have clean ones, set key/value on the event...
 				Object.assign(event,{key,value}); 
 
-				//...THEN check types!
-				var [kType,vType]=cX.checkTypes(this._private.expectedTypes,[key,value])
-
-
-			// console.log('aaa',key);
-				//Get the old value (which is undefined if we're an array and adding a new value)
+				//Then get the old value (which is undefined if we're an array and adding a new value) 
 				var oldValue = event.old = (event.add ? undefined : this.get(key)); //gets the nested value if @key is array
-		// console.log('bbb',key);
 				
 				//Then check if anything has changed, in which case we return early
 				if(!event.add && cX.sameValue(oldValue,value)){
@@ -401,7 +487,7 @@
 				if(smartType(value)=='smart'){
 					vType='smart';
 				}
-
+//TODO: 2020-04-25: We don't want or need both x and event... just store the important stuff on event
 				var x={
 					children:this._private.options.children //set here so it's included when logging x vv
 					
@@ -454,6 +540,128 @@
 			}
 		}
 
+
+		/*
+		* Get the meta for a specific key, or the "global meta" (ie. key '*' when creating smarty with options.meta:{*:{}})
+		*
+		* @return object|undefined
+		*/
+		SmartProto.prototype.getMeta=function(key){
+			if(this._private.options.meta){
+				if(this._private.options.meta.hasOwnProperty(key)){
+					return this._private.options.meta[key];
+				}else{
+					return this._private.options.meta['*']; //this could be undefined;
+				}
+			}
+			return undefined;
+		}
+
+		/*
+		* Get the default value for a key, or the "global default" (ie. key '*' when creating smarty with options.defaultValues:{*:foo})
+		*
+		* @param string|number key
+		*
+		* @return any|undefined 	The default value, or undefined if none exists
+		*/
+		SmartProto.prototype.getDefault=function(key){
+			if(this._private.options.defaultValues){
+				if(!key){
+					let d=cX.copy(this._private.options.defaultValues);
+					delete d['*'];
+					return d;
+				}else{
+					if(this._private.options.defaultValues.hasOwnProperty(key)){
+						return this._private.options.defaultValues[key];
+					}else{
+						return this._private.options.defaultValues['*']; //this could be undefined;
+					}
+				}
+			}
+			return undefined;
+		}
+
+
+		/*
+		* Apply meta restrictions on a key/value
+		*
+		* @param mixed key
+		* @param mixed value
+		*
+		* @throw <ble EINVAL>
+		*
+		* @return mixed 			The cleaned up version of $value
+		* @call <SmartProto>
+		*/
+		function applyMeta(key,value){
+			//Is there meta for this key?
+			let meta=this.getMeta(key);
+			if(!meta){
+				if(this._private.options.onlyMeta){
+					this._log.makeError("Smarty only allowing pre-defined keys and this is not one: "+key).throw("EINVAL");
+				}else{
+					return value;
+				}
+			}
+
+			//REMEMBER: The default value is always allowed UNLESS it's "empty" and meta.required==true (see below)
+			try{
+				if(value!==this.getDefault(key)){
+
+					//If there's a list of acceptable values... null is always accepted
+					if(meta.accepted && !meta.accepted.includes(value)){
+						this._log.makeError(`Value not among approved values for '${key}':`,value).throw("EINVAL");
+					}
+
+					//Ff type is specified, try forcing it (ie. '3' => 3)
+					if(meta.type){ 
+						try{
+							value=cX.forceType(meta.type,value);
+						}catch(err){
+							this._log.makeTypeError(`${meta.type} for key '${key}'`,value).throw();
+						}
+					}
+					
+					//If value should start with something...
+					if(meta.prepend){ 
+						//.init() has made sure meta.type=='string', which was checked ^
+						let l=meta.prepend.length;
+						// log.note('PREPEND:',l,value.substring(0,l),);
+						if(value.substring(0,l)!=meta.prepend)
+							value=meta.prepend+value;
+						
+					}
+					
+					if(meta.cleanFunc){
+						try{
+							//.init() made sure it's a func
+							value=meta.cleanFunc.call(this,value,key,meta);
+							 	//protip: cleanFunc can be bound if need be...
+						}catch(err){
+							console.log(this._private.options);
+							throw err;
+						}
+					}
+					
+				}
+				
+				//Finally, if it's required, make sure we have *something* at this point 
+				//NOTE: this may fail a default==null prop
+				if(meta.required && cX.isEmpty(value)){
+					this._log.makeError(`'${key}' cannot be empty: `+cX.logVar(value)).throw('EEMPTY');
+				}
+				
+				//NOTE: we check meta.constant in commonSet() since we want to know if the evt=='change' which 
+				//		for arrays we determine after this function
+			}catch(err){
+				this._log.makeError(`Failed meta-validation for key '${key}'`,err).throw();
+			}
+
+
+			return value;
+		}
+
+
 		/*
 		* Handle setting or changing private data, depending on the new/old values, the type of children etc.
 		*
@@ -469,6 +677,23 @@
 		* @call(<SmartArray>|<SmartObject>)
 		*/
 		function commonSet(x,event){
+			//Apply some restrictions for change events
+			if(event.evt=='change'){
+				//Last .meta check...
+				let meta=this.getMeta(event.key);
+				if(meta && meta.constant){
+					//If the prop is constant it's not allowed to change UNLESS it's changing away from the default (this is useful
+					//when the default was not explicitly specified and we intend to change it once only)
+					if(!cX.sameValue(event.old,this.getDefault(event.key))){
+						throw this._log.makeError(`Cannot change constant prop '${event.key}': ${cX.logVar(event.old)} --> ${cX.logVar(event.value)}`);
+					}
+				}
+
+				if(this._private.options.constantType && cX.varType(event.old)!=cX.varType(event.value)){
+					throw this._log.makeError(`Cannot change type any prop, incl. '${event.key}': ${cX.logVar(event.old)} --> ${cX.logVar(event.value)}`);
+				}
+			}
+
 			try{
 				var errMsg='Failed to '
 				var c=this._private.options.children; //shortcut
@@ -478,16 +703,16 @@
 						this._log.trace(`Setting new key '${x.keyStr}' to: ${cX.logVar(x.newValue)}`);
 
 					if(c=='smart'){
-						errMsg+='create smarty on'
+						errMsg+='create smarty on key '
 						event.value=_newSmart.call(this,x); 
 
 					
 					}else if(x.nestedKeys){
-						errMsg+='set nested value '
+						errMsg+='set nested key '
 						cX.nestedSet(x.localValue,x.nestedKeys,x.newValue,true); //true==create path if needed.
 					
 					}else{ 
-						errMsg+='set prop '
+						errMsg+='set key '
 						this._private.data[x.localKey]=x.newValue;
 					}
 
@@ -526,7 +751,7 @@
 				}
 			}catch(err){
 				var keyStr=x.keyStr; delete x.keyStr;
-				this._log.throw(`${errMsg}${keyStr}:`,x,err);
+				this._log.throw(`${errMsg}'${keyStr}':`,x,err);
 			}
 
 			return true;
@@ -645,20 +870,21 @@
 				//Copy the options from this object (so they aren't ref'd together). 
 				var options=cX.copy(this._private.options);
 				
-			//2019-09-12: Trying to pass only the default values pertaining to that child (if any)
-				//One option that can't be extended is defaultValues. A) becuse that's probably not the intention, and B) because
-				//if a default value is an obj/arr then an infinite loop of nested smarties will be created
-				if(options.defaultValues){
-					var d=cX.extract(options.defaultValues,key);
-					// this._log.debug("Not passing options.defaultValues on to child smarty",options.defaultValues);
-					delete options.defaultValues;
-					if(d)
-						options.defaultValues=d;
-				}
+				//Default and meta we only pass on stuff intended for that key/child
+				options.defaultValues=this.getDefault(key);
+				cX.isEmpty(options.defaultValues)
+					options.defaultValues=null;
+				let meta=this.getMeta(key);
+				options.meta=meta?meta.meta||null:null; //meta for key/child is not the same as meta for the grandchildren...
+
+				//If a name is on this, then the name of the child should have the key appended
+				if(options.name)
+					options.name+='.'+key;
 
 				child=new child(options);
 			}else{
 				this._log.debug(`Setting existing ${child.constructor.name} on local key '${key}'`);
+
 			}
 
 			//If we got data to set, do so before we start listening to it...
@@ -693,8 +919,9 @@
 				tripleEmit.call(this,event);
 
 			}
+
 			//...set it to run AFTER any listeners on the child itself
-			child.addEventListener('event',childListener,'+'); //+ => run at defaultIndex+1
+			child.addListener('event',childListener,'+'); //+ => run at defaultIndex+1
 
 			//Then create a way to ignore the child. Since the child may be set on multiple parents, we'll store the listener
 			//method locally, mapped to the child itself
@@ -1019,15 +1246,14 @@
 		* as deleting the props in question
 		*
 		* @param string|number|undefined key 	Undefined resets entire object, a key resets a single prop
-		* @opt bool init 						For logging purposes only. If truethy the log will say 'initiatlizing key...'
 		*
 		* @return mixed 			  
 		*/
-		SmartProto.prototype.reset=function(key,init=false){
+		SmartProto.prototype.reset=function(key){
 			// this._log.traceFunc(arguments);
 			//If no key is given, either empty everything if there also are no default values, or reset each key 
 			// currently set (which may entail deleting said key)
-			if(!key){
+			if(!key || key=='*'){
 				
 				//NOTE: in the constructors we make sure defaultValues is right type and not empty
 
@@ -1038,34 +1264,30 @@
 
 				//Get unique list of keys, all that are currently set and all in default... that way keys not in default 
 				//get deleted and keys in default get set/changed
-				var keys=this.keys().concat(Object.keys(this._private.options.defaultValues)).filter(cX.uniqueArrayFilter);
+				var keys=this.keys().concat(Object.keys(this.getDefault())).filter(cX.uniqueArrayFilter);
 				// this._log.warn("KEYS:",keys);
 
 				//Especially for arrays it's important we set key 0 first since this may be empty and things have 
 				//to remain sequential, hence we shift
-				this._log.debug(`${init ? 'Initializing':'Resetting'} all keys`,keys);
+				this._log.debug('Resetting all keys:',keys);
 				var key, oldValues=cX.copy(this._private.data);
 				while(key=keys.shift()){
-					this.reset(key,'log_init');
+					this.reset(key);
 				}
 
 				return oldValues
 			}
 
 			//If a key is passed and a default exists, set that, else just delete the key
-			if(this._private.options.defaultValues && this._private.options.defaultValues.hasOwnProperty(key)){
-				
-				var value=this._private.options.defaultValues[key];
+			var value=this.getDefault(key);
+			if(value!==undefined){
 
-				if(init)
-					this._log.trace(`Initializing '${key}': ${cX.logVar(value)}`);
-				else
-					this._log.trace(`Resetting key '${key}' from ${cX.logVar(this.get(key))} --> ${cX.logVar(value)}`);
+				this._log.trace(`Resetting key '${key}' from ${cX.logVar(this.get(key))} --> ${cX.logVar(value)}`);
 				var oldValue=this.set(key,value,null,true); //true==no log, done vv instead
 
 				//If the default value is a smart value, then reset that too
 				if(isSmart(value))
-					value.reset(undefined,'log_init');
+					value.reset(undefined);
 				
 				return oldValue;
 			}else{
@@ -1232,7 +1454,7 @@
 			cX.checkTypes(['string','array'],[name,options]);
 
 			if(options.includes('defaults') && this._private.options.defaultValues)
-				state=Object.assign({},this._private.options.defaultValues,state);
+				state=Object.assign({},this.getDefault(),state);
 
 			if(options.includes('replace'))
 				this._private.states[name]=this.replace.bind(this,state);
@@ -1266,7 +1488,7 @@
 
 
 		/*
-		* Used by set() functions is options.publicGetters==true
+		* Used by set() functions if options.publicGetters==true
 		*/
 		SmartProto.prototype._setPublicGetter=function(key){
 			if(!this.hasOwnProperty(key))
@@ -1363,6 +1585,8 @@
 
 
 
+
+
 		/***************************** SmartObject *****************************/
 
 			/*
@@ -1370,34 +1594,18 @@
 			* @exported
 			*/
 			function SmartObject(options){	
-				//For easy identification of a smarty (instanceof will fail if this constructor is loaded
-				//multiple times, and you may not want to have to load smarty at all) 
-				Object.defineProperty(this,'isSmart',{value:'SmartObject'});
-
 				//Inheritence step 1
-				SmartProto.call(this,Object.assign({},SmartObject.defaultOptions,options)); 
-					//^Sets up log and BetterEvents inheritence
-
-				//Define the private data as an object (previously null)
-				this._private.data={};
-
-				//If any default values exist, set them
-				if(this._private.options.defaultValues) //would have been deleted by SmartProto if empty
-					if(typeof this._private.options.defaultValues!='object'){
-						this._log.makeTypeError("options.defaultValues to be object",this._private.options.defaultValues)
-							.changeLvl('warn').exec();
-						this._private.options.defaultValues=null;
-					}else{
-						this.reset(undefined,'log_init'); //log_init...
-					}
-
+				SmartProto.call(this,options); 
 			}
 			//Inheritence step 2
 			SmartObject.prototype=Object.create(SmartProto.prototype);
 			Object.defineProperty(SmartObject.prototype, 'constructor', {value: SmartObject});
 
-			SmartObject.defaultOptions=Object.assign({},SmartProto.defaultOptions); //future dev: add default options here
-				
+			SmartObject.defaultOptions={
+				//future dev: add default options here
+			}; 
+
+
 
 			Object.defineProperty(SmartObject.prototype,'length',{get:function(){return Object.keys(this._private.data).length;}})
 
@@ -1416,13 +1624,16 @@
 			* @throw TypeError
 			* @return mixed 	The previously set value (which could be the same as the new value)
 			*/
-			SmartObject.prototype.set=function(key,value,event={}){
+			SmartObject.prototype.set=function(key,value,event){
 				// this._log.traceFunc(arguments);
 				
 				//Undefined is the same as deleting. This is used eg. by assign(). There is a risk that it's passed in by mistake, but
 				//so what, the same goes for any objects...
 				if(value===undefined) 
 					return this.delete(key,event,arguments[3]); //returns old value or undefined (not null)
+				
+				//Make sure we have an event object to emit later...
+				event=((event && typeof event=='object') ? event : {});
 				
 
 				//Common preparation for setting, where we also check if anything has changed from old value
@@ -1448,12 +1659,21 @@
 
 				//Do the actual setting. If we're setting a smart child then...
 				var emitHere=commonSet.call(this,x,event,arguments[3]);
+
+				//If a new property was added and we're using getters...
+				if(event.evt=='new' && this._private.options.addGetters)
+					this._setPublicGetter(x.localKey);
+				
+
 				if(emitHere){
 					//...this block would run in it, else we run it here...
 
-					//Property was added, so add getter on this object. Do this after we've successfully set
-					if(event=='new' && this._private.options.addGetters)
-						this._setPublicGetter(x.localKey);
+
+//STOPSTOP 2020-04-24: This should probably be OUTSIDE this block, since we want to add getters to every smarty along the trail...
+
+					// //Property was added, so add getter on this object. Do this after we've successfully set
+					// if(event=='new' && this._private.options.addGetters)
+					// 	this._setPublicGetter(x.localKey);
 					
 					tripleEmit.call(this,event);
 						//^fullKey can be array if we changed nested complex
@@ -1479,6 +1699,9 @@
 			*/
 			SmartObject.prototype.delete=function(key,event={}){
 				cX.checkType(['string','number'],key);
+
+				//Make sure we have an event object to emit later...
+				event=((event && typeof event=='object') ? event : {});
 
 				if(this.has(key)){
 					let oldValue=this.get(key);
@@ -1565,7 +1788,7 @@
 
 			/*
 			* Replace all values on this object (but checking first so events only go out for actual changes). This
-			* is different from this.assign() in that keys that don't exist on the passed in $obj get deleted fro 'this'
+			* is different from this.assign() in that keys that don't exist on the passed in $obj get deleted from 'this'
 			*
 			* @param object obj
 			*
@@ -1626,6 +1849,32 @@
 				return;
 			}
 
+			/*
+			* Call a function for each prop UNTIL said function returns truthy, then return that prop
+			*
+			* @param function fn
+			*
+			* @return mixed
+			*/
+			SmartObject.prototype.find=function(fn){
+				cX.checkType('function',fn,'SmartObject.find');
+
+				var key;
+				for(key in this.keys()){
+					let value=this.get(key);
+					if(fn.call(this,value,key,this))
+						return value;
+				}
+				
+				return;
+			}
+
+
+			SmartArray.prototype.find=function(test){
+				var i=this.findIndex(test);
+				return i==-1 ? undefined : this.get(i);
+			}
+
 
 			/*
 			* Similar to .assign() except it only sets those values where the keys don't already exist
@@ -1639,11 +1888,15 @@
 				cX.checkType('object',obj);
 				var excluded=cX.extract(obj,this.keys(),'excludeMissing');
 				if(Object.keys(obj).length){
-					this._log.debug("Ignoring the keys that already exists:",excluded);
+					if(excluded.length)
+						this._log.trace("Ignoring the keys that already exists:",excluded);
 					return this.assign(obj);
-				}else{
-					this._log.debug("All keys already exists:",excluded);
+				}else if(excluded.length){
+					this._log.trace("All keys already exists:",excluded);
 					return undefined;
+				}else{
+					// this._log.makeEntry('debug',"Empty object passed").addFrom().append(", nothing to fill out with").exec();
+					this._log.debug("Empty object passed, nothing to fill out with");
 				}
 			}
 
@@ -1688,30 +1941,13 @@
 			* @exported	
 			*/
 			function SmartArray(options){
-				//For easy identification of a smarty (instanceof will fail if this constructor is loaded
-				//multiple times, and you may not want to have to load smarty at all) 
-				Object.defineProperty(this,'isSmart',{value:'SmartArray'});
-
 				//To catch deprecated args... remove if found after 2020-02-23
 				if(Object.keys(arguments).length>1)
-					throw new Error("DEPRECATED! Create SmartArray with a single options argument");
+					throw new Error("DEPRECATED! Create SmartArray with a single options argument");	
 
-				//Inheritence step 1
-				SmartProto.call(this,Object.assign({},SmartArray.defaultOptions,options)); 
-					//^Sets up log and BetterEvents inheritence
-
-
-				this._private.data=[];
-
-				if(this._private.options.defaultValues){ //would have been deleted by SmartProto if empty
-					if(!Array.isArray(this._private.options.defaultValues)){
-						this._log.makeTypeError("options.defaultValues to be an array",this._private.options.defaultValues)
-							.changeLvl('warn').exec();
-						this._private.options.defaultValues=null;
-					}else{
-						this.reset(undefined,'init'); //init=log 'initializing'
-					}
-				}
+				//Call parent constructor which sets up most things...
+				SmartProto.call(this,options); 
+					
 
 				//Beyond the events common to SmartObject, we also emit 3 events related to our length
 				//Add an event to stationList that emits when we have ==1 or >1 stations
@@ -1734,11 +1970,11 @@
 			SmartArray.prototype=Object.create(SmartProto.prototype);
 			Object.defineProperty(SmartArray.prototype, 'constructor', {value: SmartArray});
 
-			SmartArray.defaultOptions=Object.assign({},SmartProto.defaultOptions,{
+			SmartArray.defaultOptions={
 				moveEvent:false    	//if false move() will use delete() and set(), else a custom 'move' event will be emitted
 				,smartReplace:true  //if true replace() will try to figure out changes to minimize # of events, else all will 
 							    	//just be deleted/set
-			})
+			}
 
 
 
@@ -1754,6 +1990,7 @@
 					return cX.copy(this._private.data[m].apply(this._private.data,arguments));
 				}	
 			});
+
 
 
 
@@ -1817,14 +2054,13 @@
 
 				//Do the actual setting, and check if we're setting a smart child...
 				var emitHere=commonSet.call(this,x,event,arguments[3]);
+			
+				//The array just got longer, add an enumerable getter to this object. Do this after we've succesfully set
+				if(event.evt=='new' && this._private.options.addGetters)
+					this._setPublicGetter(this.length-1); //call length again to get the new length
+				
 				if(emitHere){
 					//...in which case that child will run the following...
-					
-					//The array just got longer, add an enumerable getter to this object. Do this after we've succesfully set
-					if(evt=='new' && this._private.options.addGetters)
-						this._setPublicGetter(this.length-1); //call length again to get the new length
-					
-
 					tripleEmit.call(this,event); 
 				}
 
@@ -1841,6 +2077,7 @@
 			* Remove single item from the array
 			*
 			* @param number i 		The index to remove at
+			* @opt object event
 			*
 			* @emit delete
 			*
@@ -1848,7 +2085,7 @@
 			*
 			* @return mixed|undefined 		The removed item, or undefined if none existed in the first place
 			*/
-			SmartArray.prototype.delete=function(i,event={}){
+			SmartArray.prototype.delete=function(i,event){
 
 				i=cX.forceType('number',i);
 				
@@ -1856,11 +2093,14 @@
 				if(!l || i>=l)
 					return undefined
 
+				//Make sure we have an event object to emit later...
+				event=((event && typeof event=='object') ? event : {});
+
 				let oldValue=this.get(i);
 					
 				if(this._private.options.children=='smart' && typeof oldValue=='object'){
 					//Delete the smart child. This will not delete the index, which is why we slice vv
-					this._private.deleteSmartChild(key); //will also log
+					this._private.deleteSmartChild(i); //will also log
 				}else{
 					if(arguments[2]!=NO_LOG_TOKEN)
 						this._log.trace(`Deleting index ${i}:`,cX.logVar(oldValue));
@@ -1900,8 +2140,23 @@
 			}
 
 
-
-
+			/*
+			* Loop over the items backwards (which enables deleting without messing up the index)
+			*
+			* @param function fn
+			*
+			* @throw TypeError
+			*
+			* @return void
+			*/
+			SmartArray.prototype.forEachBackwards=function(fn){
+				cX.checkType('function',fn);
+				let i=this.length-1
+				for(i;i>=0;i--){
+					fn.call(this,this.get(i),i,this);
+				}
+				return
+			}
 
 
 
@@ -2071,7 +2326,7 @@
 			* @return primitive|array 	@see @return of this.set()
 			*/
 			SmartArray.prototype.splice=function(index,...values){
-				console.warn("SPLICE GOT:",index,values);
+				// console.warn("SPLICE GOT:",index,values);
 				if(values.length==1)
 					return this.set(index,values[0],true);
 				else
@@ -2561,18 +2816,21 @@
 					return;
 				}
 
+				//If this is the first time this smarty is linked, setup facilities to stop linking
+				if(!this._private.links){
+					this._private.links=[]
+					this._private.links.killAll=()=>{
+						this._log.info("Killing all uniSoc links on this smarty");
+						this._private.links.forEach(obj=>obj.kill())
+					}
+				}
+
 				var msg=args.payload.id+': Linked smarty,'
 
-				//To prevent loops, eg:
-				// 	remote change => receive change event => apply change locally => emit local change event => send to remote
-				//we store all received changes. 
-				//NOTE: an endless loop is never a risk since the other side will notice that no change has occured as per 
-				//      usual smarty behaviour
-				var received=[];
 
 				if(args.Tx){
 					var transmit=(event)=>{
-						//Prevent sending out events we just received on the same link
+						//Prevent sending out events we just received on the same link (see Rx vv)
 						if(args.Rx && event.Rx==args.Rx){
 							//TODO: turn this level down when we know it's working
 							this._log.highlight('green',"Not returning just received msg", event);
@@ -2586,12 +2844,36 @@
 						//If we're still running we sent the event
 						args.unisoc.send({subject:args.Tx,data:event})
 					}
-					this.on('event',transmit);
+					let evt=this.on('event',transmit);
+					
+					//Now store the link and add ability to kill it
+					this._private.links.push({Tx:args.Tx, evt, kill:()=>{
+						this.removeListener(evt); //stop sending
+						args.unisoc.send({subject:args.Tx,killedTx:true}) //tell the other end we've stopped
+					}});
 					msg+=` Tx:${args.Tx}`
 				}
 
 				if(args.Rx){
-					args.unisoc.on(args.Rx,(event)=>{
+					let evt=args.unisoc.on(args.Rx,(event)=>{
+						
+						let oe="Other end stopped"
+						if(event.killedTx){
+							this._log.note(oe+" transmitting! Removing listener on unisoc...");
+							this.removeListener(evt);
+							return;
+						}else if(event.killedRx){
+							oe+=' listening'
+							if(args.Tx){
+								this._log.note(oe+", stopping our transmission");
+								this._private.links.find(obj=>{if(obj.Tx==args.Tx){this.removeListener(obj.evt);return true;}})
+							}else{
+								this._log.debug(oe+", but we havn't been listening so...");
+							}
+							return;
+						}
+
+
 						//Prevent incoming events to be sent back out on the same link...
 						if(Tx){
 							event.Rx=args.Rx
@@ -2599,6 +2881,11 @@
 						event.src=event.src||'remote';
 						return this.replicate.apply(this,event);
 					});
+					this._private.links.push({Rx:args.Rx, kill:()=>{
+						this.removeListener(evt)//stop receiving
+						args.unisoc.send({subject:args.Rx,killedRx:true}) //tell the other end we've stopped
+
+					}}); 
 					if(args.Rx==args.Tx)
 						msg=msg.replace('Tx:','Tx/Rx:')
 					else
@@ -2878,12 +3165,17 @@
 
 
 			/*
-			* Automatically link smarties when sending and receiving on a uniSoc
+			* Automatically link smarties when sending and receiving on a uniSoc. This function should be called after
+			* a unisoc is created, and from that point on ALL smarties we transmit will be automatically linked.
+			*
+			* NOTE: This ONLY AFFECTS smarties we transmit, not those we receive!
 			*
 			* @param object x
 			* 	@prop <uniSoc> unisoc		  Any instance of uniSoc
-			*	@opt string|bool Tx           @see this.prepareLink(). Only affects smarties we send, not those we receive
-			*	@opt string|bool Rx 		  @see this.prepareLink(). Only affects smarties we send, not those we receive
+			*	@opt string|bool Tx           @see this.prepareLink(). 
+			*	@opt string|bool Rx 		  @see this.prepareLink(). 
+			*
+			* @return void
 			*
 			* ProTip: The Tx/Rx passed in here are only the defaults, they can be overridden by the Tx/Rx set on the individual smarty
 			* @exported

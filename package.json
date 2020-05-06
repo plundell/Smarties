@@ -1,12 +1,13 @@
 {
   "name": "smarties"
-  ,"version": "1.0.3"
+  ,"version": "1.0.4"
   ,"description": "Javascript objects and arrays that vet input and emit changes"
   ,"scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   }
   ,"author": "plundell"
   ,"license": "Apache-2.0"
+  ,"main":"smarties.js"
   ,"homepage": "https://github.com/plundell/smarties"
   ,"repository": {
     "type": "git"
