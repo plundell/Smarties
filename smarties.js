@@ -2831,8 +2831,8 @@
 					}
 				}
 
-				var msg=args.payload.id+': Linked smarty,'
-
+				
+				var what=[];
 
 				if(args.Tx){
 					var transmit=(event)=>{
@@ -2857,7 +2857,7 @@
 						this.removeListener(evt); //stop sending
 						args.unisoc.send({subject:args.Tx,killedTx:true}) //tell the other end we've stopped
 					}});
-					msg+=` Tx:${args.Tx}`
+					what.push('sending')
 				}
 
 				if(args.Rx){
@@ -2892,13 +2892,11 @@
 						args.unisoc.send({subject:args.Rx,killedRx:true}) //tell the other end we've stopped
 
 					}}); 
-					if(args.Rx==args.Tx)
-						msg=msg.replace('Tx:','Tx/Rx:')
-					else
-						msg+=` Rx:${args.Rx}`
+					what.push('receiving');
 				}
 
-				this._log.info(msg);
+				what=what.length==1?what[0]+' only':'both directions!'
+				this._log.info(`${args.payload.id}: Linked smarty, ${what}`,cX.subObj(args,['Tx','Rx']));
 				return;
 			}
 
