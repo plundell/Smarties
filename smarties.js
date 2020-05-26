@@ -149,7 +149,6 @@
 		* @constructor SmartProto 	Prototype for several objects in this folder
 		*/
 		function SmartProto(_options){	
-			Object.defineProperty(this,'isSmart',{value:this.constructor.name});
 
 			//Combine default options
 			var options=Object.assign({},SmartProto.defaultOptions,this.constructor.defaultOptions,_options); 
@@ -1605,6 +1604,8 @@
 			* @exported
 			*/
 			function SmartObject(options){	
+				Object.defineProperty(this,'isSmart',{value:'SmartObject'});
+				
 				//Inheritence step 1
 				SmartProto.call(this,options); 
 			}
@@ -1952,6 +1953,8 @@
 			* @exported	
 			*/
 			function SmartArray(options){
+				Object.defineProperty(this,'isSmart',{value:'SmartArray'});
+
 				//To catch deprecated args... remove if found after 2020-02-23
 				if(Object.keys(arguments).length>1)
 					throw new Error("DEPRECATED! Create SmartArray with a single options argument");	
