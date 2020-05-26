@@ -3174,12 +3174,10 @@
 			* Automatically link smarties when sending and receiving on a uniSoc. This function should be called after
 			* a unisoc is created, and from that point on ALL smarties we transmit will be automatically linked.
 			*
-			* NOTE: This ONLY AFFECTS smarties we transmit, not those we receive!
-			*
 			* @param object x
 			* 	@prop <uniSoc> unisoc		  Any instance of uniSoc
-			*	@opt string|bool Tx           @see this.prepareLink(). 
-			*	@opt string|bool Rx 		  @see this.prepareLink(). 
+			*	@opt string|bool Tx           @see this.prepareLink(). Only affects smarties we transmit
+			*	@opt string|bool Rx 		  @see this.prepareLink(). Only affects smarties we transmit
 			*
 			* @return void
 			*
@@ -3188,51 +3186,71 @@
 			*/
 			let TxRx=['Tx','Rx'];
 			function autoLinkUniSoc(x){
-				cX.checkProps(x,{
-					unisoc:'object'
-					,Tx:['boolean','undefined']
-					,Rx:['boolean','undefined']
-				});
-				let autoLinkDefault=cX.subObj(x,TxRx);
+				let t=typeof x, errstr=`Expected a <uniSoc> or an object with .unisoc set, got a ${t}.`
+				if(!x || typeof x!='object')
+					throw new TypeError(errstr)
+
+				var unisoc, autoLinkDefault={};
+				if(x.isUniSoc){
+					unisoc=x;
+				}else if(x.unisoc && x.unisoc.isUniSoc){
+					unisoc=x.unisoc
+					Object.assign(autoLinkDefault,cX.subObj(x,TxRx));
+				}else{
+					throw new Error(`EINVAL. ${errstr} ${JSON.stringify(x)}`);
+				}
 
 				//When receiving responses
-				x.unisoc.onresponse=function receiveSmarty(payload){
-					let unisoc=this; //for clarity... we could just as well use the unisoc already defined outside...
+				unisoc.onresponse=function autoLinkSmarty_receive(payload){
 					try{
-						if(payload.smartOptions){
-							unisoc.log.info("Response contained a smarty, initiating...");
+						if(payload.smartOptions && payload.smartLink){
+							
+							unisoc.log.info("Response contained a smarty, but not initiating...");
+							
 							payload.data=createSmarty(payload.data,payload.smartOptions);
 							delete payload.smartOptions; //just so the caller doesn't try to do it again
 
-							//It's up to the main process to determine if they want to send and/or receive, on this 
-							//side we just follow suit
-							if(payload.smartLink){
-								payload.data.initLink(unisoc, payload, 'flip'); //flip=> what they send we receive
-							}
+							//NOTE: we ignore passed in^ Tx and Rx here, it's up to the other side if they want to send us
+							//updates or listen for our changes...
+							payload.data.initLink(unisoc, payload, 'flip'); //flip=> what they send we receive
+							  //^logs what is linked
 						}
 					}catch(err){
 						unisoc.log.error(err,payload);
 					}
 				}
 
-				x.unisoc.beforetransmit=function prepareSmartLink(payload){
-					let unisoc=this; //for clarity... we could just as well use the unisoc already defined outside...
+				unisoc.beforetransmit=function autoLinkSmarty_transmit(payload){
 					try{
+						//This will fire for all transmits, so first we have to check if it's even a smarty
 						if(payload.data && payload.data.isSmart){
+							let smarty=payload.data; //it WAS as smarty, so for clarity we rename it in here
 							let who=payload.id+': '
+							
+							//We're auto-linking live smarties, but if someone tries to do it manually the above isSmart() shouldn't
+							//be truthy and we shouldn't be here... so just make sure no duplication of efforts have been made...							
 							if(payload.smartOptions||payload.smartLink){
-								unisoc.log.warn(who+"Payload has partly been prepared to link a smarty, but data has not been stupified. "
-									+"Will not touch it here.",payload);
+								unisoc.log.warn(who+"Possible bug? Someone has partly prepared the payload for smart linking, but the data/smarty"
+									+"is still live... Did someone forget something? Will not touch it here!",payload);
 							}else{
-								let smartyOptions=cX.subObj(payload.data._private.options,TxRx,'excludeMissing');
-								let opts=Object.assign({payload},autoLinkDefault,smartyOptions)
-								var which=Object.keys(cX.subObj(opts,TxRx,'excludeMissing')).join(' and ');
+								//Determine if/what we're going to link and log it
+								let smartyOptions=cX.subObj(smarty._private.options, TxRx, 'excludeUndefined')
+									,opts=Object.assign({},autoLinkDefault,smartyOptions)
+									,logstr=`${who}Payload contained a smarty,`
+									,which=(opts.Tx?(opts.Rx?'BOTH directions':'sending only'):opts.Rx?'sending only':false)
+								;
+								// console.debug('autolink options:',{result:opts,autoLinkDefault,smartyOptions});
 								if(!which){
-									unisoc.log.note(`${who}Payload contained a smarty but it will not be linked.`,{autoLinkDefault,smartyOptions});
+									unisoc.log.note(`${who}Payload contained a smarty, but it will not be linked.`)
 								}else{
-									unisoc.log.info(`${who}Payload contained a smarty, linking ${which}`);
-									payload.data.prepareLink(opts);
-									payload.data=payload.data.stupify();
+									unisoc.log.info(`${who}Preparing smart payload, ${which}`);
+									opts.payload=payload; //prepareLink needs the entire payload too...
+									smarty.prepareLink(opts);
+
+									//Finally make the smarty stupid like we were talking about ^
+									// console.log(smarty);
+									payload.data=smarty.stupify();
+									// console.log(payload.data);
 								}
 							}
 						}
@@ -3241,8 +3259,7 @@
 					}
 				}
 
-				x.unisoc.aftertransmit=function initSmartLink(payload){
-					let unisoc=this; //for clarity... we could just as well use the unisoc already defined outside...
+				unisoc.aftertransmit=function initSmartLink(payload){
 					try{
 						if(payload.smarty){
 							payload.smarty.initLink(unisoc, payload);
