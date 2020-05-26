@@ -2121,7 +2121,24 @@
 
 			}
 
-
+			/*
+			* Find the first matching item and delete it
+			*
+			* @param function test 	A function to test each item with (@see this.findIndex())
+			*
+			* @emit delete
+			*
+			* @throw TypeError
+			*
+			* @return mixed|undefined 		The removed item, or undefined if none existed in the first place
+			*/
+			SmartArray.prototype.findDelete=function(test){
+				let i=this.findIndex(test);
+				if(i>-1)
+					return this.delete(i);
+				else
+					return undefined;
+			}
 
 			/*
 			* Remove single item from the array given it's value
@@ -2162,6 +2179,27 @@
 				return
 			}
 
+
+			/*
+			* Find all matching items and delete them
+			*
+			* @param function test 	A function to test each item with (@see this.findIndex())
+			*
+			* @emit delete
+			*
+			* @throw TypeError
+			*
+			* @return array 		Array of deleted items, with index intact (ie. not sequential array), or empty array
+			*/
+			SmartArray.prototype.findAllDelete=function(test){
+				cX.checkType('function',test);
+				var deleted=[];
+				this.forEachBackwards((item,i)=>{
+					if(test.call(this,item,i))
+						deleted[i]=this.delete(i);
+				})
+				return deleted;
+			}
 
 
 
@@ -2680,7 +2718,25 @@
 			}
 
 
-
+			/*
+			* Get all items that satisfies a test
+			*
+			* @param mixed test 	A function that will be .call(this,item,index) or a any value that will be 
+			*							tested === against each item
+			* @opt bool retainIndex Default false. If true the original index is retained
+			*
+			* @return number 		The index or -1
+			*/
+			SmartArray.prototype.filter=function(test,retainIndex=false){
+				let indexes=this.findIndexAll(test);
+				if(retainIndex){
+					let arr=[];
+					indexes.forEach(i=>arr[i]=this.get(i));
+					return arr;
+				}else{
+					return indexes.map(this.get.bind(this))
+				}
+			}
 			//End of SmartArray
 
 
