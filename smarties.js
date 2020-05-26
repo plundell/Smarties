@@ -1497,12 +1497,21 @@
 
 
 
+
 		/*
-		* Used by set() functions if options.publicGetters==true
+		* Set public enumerable getters/setters based on options.publicGetters & .publicSetters
+		*
+		* @param 
+		* @access private
+		* @call(this)
 		*/
-		SmartProto.prototype._setPublicGetter=function(key){
-			if(!this.hasOwnProperty(key))
-				Object.defineProperty(this,key,{enumerable:true,configurable:true,get:()=>this.get(key)});
+		function setPublicAccessors(key){
+			if(!this.hasOwnProperty(key)){
+				Object.defineProperty(this,key,{enumerable:true,configurable:true
+					,get:()=>this.get(key)
+					,set:(val)=>this.set(key,val)
+				});
+			}
 		}
 
 		/*
@@ -1522,23 +1531,6 @@
 				}
 			}
 		}
-
-		/*
-		* @access private
-		* @call(this)
-		*/
-		function setPublicGetters(){
-			var p;
-			for(p in Object.getOwnPropertyNames(this._private.data)){
-				this.setPublicGetter(p);
-			}
-		}
-
-		SmartProto.prototype.resetPublicGetters=function(){
-			removePublicGetters.call(this);
-			setPublicGetters.call(this);
-		}
-
 
 
 
@@ -2061,12 +2053,11 @@
 			
 				//The array just got longer, add an enumerable getter to this object. Do this after we've succesfully set
 				if(event.evt=='new' && this._private.options.addGetters)
-					this._setPublicGetter(this.length-1); //call length again to get the new length
+					setPublicAccessors.call(this,this.length-1); //call length again to get the new length
 				
-				if(emitHere){
-					//...in which case that child will run the following...
+				//We only emit from the nested-most smarty... which may be where we are right now!
+				if(emitHere)
 					tripleEmit.call(this,event); 
-				}
 
 				return event.old;
 
