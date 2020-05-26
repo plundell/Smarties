@@ -104,10 +104,14 @@
 								  //('new'/'delete' on child becomes 'change' on parent). Alternatively you can pass 'string',
 								  //'number' or 'boolean' to limit primitive children further
 			
-			,addGetters:true    //if true, enumerable getters will be added/removed when keys are set/deleted
+			,addGetters:true    //if true, enumerable getters and setters will be added/removed when keys are set/deleted
+
+			,assignmentWarn:true //Default true => if you write props directly on smarty without using .set(), warn! Use a number
+								 //to have a check be performed on an interval 
+
 			,getLive:false      //if true, get() will return a 'live' value (only relevant if children=complex)
 
-		//Used if sending the smarty over a uniSoc
+		//Used if sending the smarty over a uniSoc, truthy => send/receive
 			,Tx:undefined 	//local changes will be sent over uniSoc if this prop is set
 			,Rx:undefined   //changes coming from the other side of a uniSoc will be applied to the local object
 
@@ -252,19 +256,26 @@
 
 
 
-			//If we want to add getters, chances are good that we want all enumerable props to be getters (ie. that
-			//we don't intend for anyone to "accidentally" use an assignment operator for a new prop...), so we 
-			//check the object a few seconds after it's been created and warn if that is the case
-			if(this._private.options.addGetters){
+			//During normal circumstances chances are good that we want all enumerable props to be getters (ie. that
+			//we don't intend for anyone to "accidentally" use an assignment operator for a new prop, but instead
+			//use .set()), so unless told not to we check the object a few seconds after it's been created and warn 
+			//if that is the case
+			let a=this._private.options.assignmentWarn
+			if(a){
 				let stack=(new Error()).stack
-				setTimeout(()=>{
+				let check=()=>{
 					Object.entries(Object.getOwnPropertyDescriptors(this)).forEach(([prop,desc])=>{
 						if(desc.enumerable && !desc.get){
-							this._log.makeEntryRaw('warn',`Prop '${prop}' was not set using .set(), ie. it's NOT SMART`
+							this._log.makeEntryRaw('warn',`Prop '${prop}' was not set using .set(), ie. it will NOT be monitored.`
 								,undefined,stack).exec();
 						}
 					})
-				},3000)
+				}
+				//Allow a number to set an interval, while truthy just checks once...
+				if(typeof a=='number')
+					setInterval(check,a);
+				else 
+					setTimeout(check,3000);
 			}
 
 
