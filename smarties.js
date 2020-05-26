@@ -1864,10 +1864,7 @@
 			}
 
 
-			SmartArray.prototype.find=function(test){
-				var i=this.findIndex(test);
-				return i==-1 ? undefined : this.get(i);
-			}
+			
 
 
 			/*
@@ -1979,7 +1976,7 @@
 
 
 			//Extend a few non-destructive methods
-			[	'includes','map','forEach','filter','entries','every','indexOf','join','lastIndexOf'
+			[	'includes','map','forEach','entries','every','indexOf','join','lastIndexOf'
 				,'reduce','reduceRight','some','toLocaleString','values','slice'
 			].forEach(m=>{
 				SmartArray.prototype[m]=function(){
