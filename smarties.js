@@ -1674,22 +1674,12 @@
 
 				//If a new property was added and we're using getters...
 				if(event.evt=='new' && this._private.options.addGetters)
-					this._setPublicGetter(x.localKey);
+					setPublicAccessors.call(this,x.localKey);
 				
-
-				if(emitHere){
-					//...this block would run in it, else we run it here...
-
-
-//STOPSTOP 2020-04-24: This should probably be OUTSIDE this block, since we want to add getters to every smarty along the trail...
-
-					// //Property was added, so add getter on this object. Do this after we've successfully set
-					// if(event=='new' && this._private.options.addGetters)
-					// 	this._setPublicGetter(x.localKey);
-					
+				//We only emit from the nested-most smarty... which may be where we are right now!
+				if(emitHere)
 					tripleEmit.call(this,event);
-						//^fullKey can be array if we changed nested complex
-				}
+				
 
 				return event.old;
 			}
@@ -2632,6 +2622,8 @@
 
 
 
+
+
 			/*
 			* Get the index of the first value that satisfies a test
 			*
@@ -2722,7 +2714,6 @@
 
 
 
-
 		/************* Link smarties over uniSoc ************/
 
 
@@ -2755,6 +2746,7 @@
 				//so we simply ignore it in this method.
 				if(x.payload.err){
 					this._log.throw("The passed in payload has .err set. Please delete that before calling this method.",x.payload);
+
 				}else if(x.payload.smartOptions||x.payload.smartLink){
 					this._log.makeError("Has the payload already been prepared, or was this method called on the receiving side?"
 						,x.payload).setCode('EALREADY').exec().throw();
