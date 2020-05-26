@@ -417,7 +417,7 @@
 					break;
 				case '<SmartArray>':
 				case 'array':
-					smarty=new SmartyArray(options);
+					smarty=new SmartArray(options);
 			}
 			
 			smarty.assign(cX.copy(data));
@@ -1242,8 +1242,9 @@
 		SmartProto.prototype.stupify=function(key=undefined){
 			if(key)
 				return cX.copy(this.get(key))
-			else
+			else{
 				return cX.copy(this)
+			}
 		}
 		SmartProto.prototype.copy=function(key){
 			return this.stupify(key);
@@ -2085,7 +2086,8 @@
 				if(!l || i>=l)
 					return undefined
 
-				//Make sure we have an event object to emit later...
+				//Make sure we have an event object to emit later... (but don't throw if we got something else
+				//because chances are this method was called in a loop a arg #2 is the key)
 				event=((event && typeof event=='object') ? event : {});
 
 				let oldValue=this.get(i);
