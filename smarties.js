@@ -424,6 +424,44 @@
 		}
 
 		/*
+		* Change the rules for the children of this instance
+		*
+		* @param string to
+		* @opt flag 'silent' 	Prevents anything from being emitted
+		*
+		* @return void
+		*/
+		SmartProto.prototype.changeChildren=function(to,silent=null){
+			if(this._private.options.children==to)
+				return;
+
+			this.traceFrom(`Changing ${this._private.options.children} children to ${to}. Called `);
+			//If we're moving away from "smart" then we'll need to remove the children first so the listeners 
+			//get removed... 
+			if(this._private.options.children=='smart' || silent=='silent'){
+				var data=this.empty(silent=='silent'?'silent':'force');
+			}else{
+				data=this._private.data;
+			}
+
+			//...then we can change the settings
+			this._private.options.children=to;
+			setupChildren.call(this);
+
+
+			//finally we assign the data back which will cause the new rules to apply
+			if(silent=='silent'){
+				for(let key in data){
+					this.set(key,data[key],{noEmit:true});
+				}
+			}else{
+				this.assign(data);
+			}
+
+			return;
+		}
+
+		/*
 		* Init stuff given options.meta is any were passed. Used by SmartProto() and receiveAndLink()
 		* @param object|undefined meta 
 		* @return void;
@@ -669,10 +707,14 @@
 
 			//...and with a hidden prop for internal use. NOTE: when creating smarties recursively this will already exist on the event, so keep
 			//any keys not set here
-			Object.defineProperty(event,'__smartint__',{writable:true,configurable:true,value:Object.assign({},event.__smartint__,{
+			Object.defineProperty(event,'__smarthelp__',{writable:true,configurable:true,value:Object.assign({},event.__smarthelp__,{
 				localKey
 				,nestedKeys //will be undefined if not array^
+				
 				,children:this._private.options.children //set here ONLY so it's included when logging
+
+				,evt:event.evt //since the same event is passed around and thus event.evt may change
+				,old:event.old //since the same event is passed around and thus event.old may change
 			})});
 
 
@@ -694,7 +736,7 @@
 		*
 		* @throws TypeError
 		* @return object 		The passed in $event or a newly created one. Will be emitted after setting. Contains secret
-		*						prop __smartint__ which is deleted before emitting.
+		*						prop __smarthelp__ which is deleted before emitting.
 		*
 		* @sets event.key*2(in begining & final at end), event.old (final), event.value (temp, reset by commonSet)
 		* @call(<SmartArray>|<SmartObject>)
@@ -705,7 +747,7 @@
 			try{
 				//Check the key and make sure we have an event
 				event=commonPrepareAlter.call(this,key,event);
-				x=event.__smartint__;
+				x=event.__smarthelp__;
 
 				//Check the value type...
 				// console.log(this._private.expectedValTypes,value)
@@ -878,7 +920,7 @@
 		* @call(<SmartArray>|<SmartObject>)
 		*/
 		function commonSet(event){
-			var x=event.__smartint__;
+			var x=event.__smarthelp__;
 			//Apply some restrictions for change events
 			if(event.evt=='change'){
 				//Last .meta check...
@@ -978,7 +1020,7 @@
 		* @return mixed 		The new value which should be set on event.value
 		*/
 		function _newSmart(event){
-			var x=event.__smartint__
+			var x=event.__smarthelp__
 			if(x.nestedKeys){
 				//Determine if the first key is a number or string, choosing arr/obj accordingly
 				var childConstructor=(isNaN(Number(x.nestedKeys[0]))?SmartObject:SmartArray);
@@ -989,6 +1031,9 @@
 
 				//Recursively create new objects
 				return setSmartChild.call(this,x.localKey,childConstructor).set(x.nestedKeys,event.value,event); 
+				 //^REMEMBER, when 'event' is passed to .set() event.__smarthelp__ will be replaced, so after this 
+				 //           you need to have a copy of __smarthelp__ if you want to use the current one... which
+				 //           is known to and made use of by .set() when assigning public accessors
 			}
 
 			//The following 2 cases we'll have to create a new child, set data on it, then start listening to it,
@@ -1018,7 +1063,7 @@
 		* @return mixed 		The new value which should be set on event.value
 		*/
 		function _changeSmart(event){
-			var x=event.__smartint__
+			var x=event.__smarthelp__
 			switch(x.valType){	
 				//If we get a regular object we have to create a new smart object
 				case 'object':
@@ -1081,7 +1126,7 @@
 
 			//Create child if necessary
 			if(cX.checkType(['<SmartArray>','<SmartObject>','function'],child)=='function'){		
-				this._log.debug(`Creating nested ${child.name} on key '${key}'`);
+				this._log.debug(`Will create nested ${child.name} on key '${key}'`);
 
 				//Copy the options from this object (so they aren't ref'd together). 
 				var options=cX.copy(this._private.options);
@@ -1098,8 +1143,9 @@
 				if(options.name)
 					options.name+='.'+key;
 
-				child=new child(options);
 
+				child=new child(options);
+				  //^this will log a trace with the options...
 
 			}else{
 				this._log.debug(`Setting existing ${child.constructor.name} on local key '${key}'`);
@@ -1107,8 +1153,9 @@
 			}
 
 			//If we got data to set, do so before we start listening to it...
-			if(data)
-				child.assign(data);
+			if(!cX.isEmpty(data)){
+				child.assign(data); //future note: assign will log...
+			}
 
 
 			//First listen to changes from the child. This listener changes the live event object so we... vv
@@ -1202,10 +1249,10 @@
 		function revert(event){
 			
 			//First create a new event to pass along so the reverting action doesn't emit anything	
-			let revEvt={__smartint__:{noEmit:true}}
+			let revEvt={noEmit:true}
 			switch(event.evt){
 				case 'new':
-					let x=event.__smartint__.revertNewSmarty;
+					let x=event.__smarthelp__.revertNewSmarty;
 					if(x){
 						SmartProto.prototype.delete.call(x.smarty,x.key,revEvt);
 					}else{
@@ -1246,6 +1293,7 @@
 
 			try{
 
+				//IF for any reason we don't want the event emitted, eg @see revert()
 				if(event.noEmit)
 					return;
 
@@ -1268,7 +1316,7 @@
 				p.then(function tripleEmit_emitting(){
 					//Clean up internal usage stuff... Remember, these get deleted in childListener() too, so don't think we should save them
 					//for the sake of propogation
-					delete event.__smartint__;
+					delete event.__smarthelp__;
 
 					self.emit('event',event);
 
@@ -1306,27 +1354,30 @@
 		* @reject ...
 		*/
 		SmartProto.prototype.setAndWait=function(key,value,event,index='+'){
-			//Make sure we have an event object so we can check emitted events to get a match. 
+			//Make sure we have an event object so we can set a flag on it and check emitted events to get a match. 
 			if(!event || typeof event!='object')
 				event={};
 				// NOTE: we don't accept the append boolean as arg #3 like SmartArray.
+			var flag={}
+			Object.defineProperty(event,'__setAndWaitFlag__',{value:flag,writable:true});
 
 			var {promise,resolve,reject}=cX.exposedPromise();
 
 			this.addListener(/(event|intercept)/,(_event)=>{
-				if(_event==event){
+				if(_event.__setAndWaitFlag__==flag){
+					delete _event.__setAndWaitFlag__
 					//We're only listening to 2 events, so it'e either...
-					if(event.evt=='intercept')
-						reject(event);
+					if(_event.evt=='intercept')
+						reject(_event);
 					else
-						resolve(event);
+						resolve(_event);
 
 					//We're only expecting one of these events to fire, so tell BetterEvents to remove this listener by returning...
 					return 'off' 
 				}
 			},index)
 
-
+			this.set(key,value,event);
 			return promise;
 
 		}
@@ -1568,7 +1619,7 @@
 			if(event.old==undefined)
 				return event.old; //ie. undefined
 			
-			var x=event.__smartint__;
+			var x=event.__smarthelp__;
 
 			event.evt='delete';
 			event.value=undefined;
@@ -1603,7 +1654,7 @@
 						delete this[this.length];//yes, call this.length again...
 					
 					//The above only deleted the index (ie. set it to undefined), but it didn't shift the rest of the keys... so do that now
-					this._private.data.splice(i,1);
+					this._private.data.splice(key,1);
 				}else{
 					if(this._private.options.addGetters)
 						delete this[key];
@@ -1739,6 +1790,7 @@
 		*
 		* @param string mode 		What to do if a delete() fails:
 		*								'force' - continue delete(), then empty any remaining ungracefully (ie. no event emitted)
+		*								'silent' - like 'force', but events are supressed
 		*								'panic' - stop executing immediately, throwing error
 		*								'finish' - conintue delete() then throw after
 		*
@@ -1763,7 +1815,7 @@
 			while(i--){
 				let key=keys[i];
 				try{
-					oldValues[key]=this.delete(key);
+					oldValues[key]=this.delete(key,{noEmit:true});
 				}catch(err){
 					let msg=`Problems empyting ${this.constructor.name} while processing key '${key}'.`;
 					if(mode=='panic')
@@ -1869,6 +1921,7 @@
 		* @call(this)
 		*/
 		function setPublicAccessors(key){
+			this._log.traceFrom(`Setting public accessor on '${key}'`);
 			//2020-05-29: Removing this check because I think we'll always want to set this...
 			// if(!this.hasOwnProperty(key)){
 				Object.defineProperty(this,key,{enumerable:true,configurable:true
@@ -1950,6 +2003,30 @@
 
 
 
+
+		/*
+		* Similar to .assign() except it only sets those values where the keys don't already exist
+		*
+		* @param function fn
+		*
+		* @return object|undefined 		If no changes occured then undefined is returned. Else an object with same keys
+		*								as @obj for those values that have changed. Values are the old values
+		*/
+		SmartProto.prototype.fillOut=function(obj){
+			cX.checkType('object',obj);
+			var excluded=cX.extract(obj,this.keys(),'excludeMissing');
+			if(Object.keys(obj).length){
+				if(excluded.length)
+					this._log.trace("Ignoring the keys that already exists:",excluded);
+				return this.assign(obj);
+			}else if(excluded.length){
+				this._log.trace("All keys already exists:",excluded);
+				return undefined;
+			}else{
+				// this._log.makeEntry('debug',"Empty object passed").addFrom().append(", nothing to fill out with").exec();
+				this._log.debug("Empty object passed, nothing to fill out with");
+			}
+		}
 
 
 
@@ -2066,12 +2143,16 @@
 				}
 				
 
+				//If we're setting nested smarties then __smarthelp__ will get replaced on the event, so keep our version which
+				//we may need vv
+				var x=event.__smarthelp__;
+
 				//Do the actual setting. If we're setting a smart child then...
 				var emitHere=commonSet.call(this,event,arguments[3]);
 
 				//If a new property was added and we're using getters...
 				if(event.evt=='new' && this._private.options.addGetters)
-					setPublicAccessors.call(this,event.__smartint__.localKey);
+					setPublicAccessors.call(this,x.localKey);
 				
 				//We only emit from the nested-most smarty... which may be where we are right now!
 				if(emitHere)
@@ -2109,9 +2190,14 @@
 				
 				try{
 
+					if(cX.isEmpty(obj)){
+						this._log.trace("Empty obj passed in, not assigning anything...");	
+						return undefined;
+					}
+
 					//If the exact same data was passed in, exit early
 					if(cX.sameValue(this._private.data, obj)){
-						this._log.trace("Tried to assign the same values, ignoring...");	
+						this._log.trace("Tried to assign the same values, ignoring...",obj);	
 						return undefined;
 					}
 					this._log.trace("Assigning multiple values:",obj);
@@ -2225,29 +2311,6 @@
 			
 
 
-			/*
-			* Similar to .assign() except it only sets those values where the keys don't already exist
-			*
-			* @param function fn
-			*
-			* @return object|undefined 		If no changes occured then undefined is returned. Else an object with same keys
-			*								as @obj for those values that have changed. Values are the old values
-			*/
-			SmartObject.prototype.fillOut=function(obj){
-				cX.checkType('object',obj);
-				var excluded=cX.extract(obj,this.keys(),'excludeMissing');
-				if(Object.keys(obj).length){
-					if(excluded.length)
-						this._log.trace("Ignoring the keys that already exists:",excluded);
-					return this.assign(obj);
-				}else if(excluded.length){
-					this._log.trace("All keys already exists:",excluded);
-					return undefined;
-				}else{
-					// this._log.makeEntry('debug',"Empty object passed").addFrom().append(", nothing to fill out with").exec();
-					this._log.debug("Empty object passed, nothing to fill out with");
-				}
-			}
 
 
 
@@ -2388,7 +2451,7 @@
 
 				//Common preparation for setting
 				event=commonPrepareSet.call(this,key,value,event); //event.add!=undefined implies that key has to be numerical
-				let x=event.__smartint__;
+				let x=event.__smarthelp__;
 
 				//Then check if anything has changed, in which case we return early
 				if(event.evt=='none'){
