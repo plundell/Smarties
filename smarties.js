@@ -244,7 +244,7 @@
 			// console.log({options,logOptions})
 			var log=new BetterLog(this,logOptions);
 			Object.defineProperty(this,'_log',{enumerable:false,value:log});
-			this._log.makeEntry('trace','Creating '+(logOptions.hasOwnProperty('name')?`smarty '${this._log.name}'`:'unnamed smarty')
+			this._log.makeEntry('trace','Creating '+(logOptions.hasOwnProperty('name')?`smarty '${this._log.name}'`:'unnamed smarty with options:')
 				,_options).changeWhere(2).exec();
 			this._betterEvents.onerror=log.error;
 
@@ -435,7 +435,7 @@
 			if(this._private.options.children==to)
 				return;
 
-			this.traceFrom(`Changing ${this._private.options.children} children to ${to}. Called `);
+			this._log.traceFrom(`Changing ${this._private.options.children} children to ${to}. Called `);
 			//If we're moving away from "smart" then we'll need to remove the children first so the listeners 
 			//get removed... 
 			if(this._private.options.children=='smart' || silent=='silent'){
@@ -518,7 +518,11 @@
 		* If this object is to be serialized, only serialize the data
 		*/
 		SmartProto.prototype.toJSON=function(){
-			return this._private.data
+			if(!isSmart(this)){
+				BetterLog._syslog.throw('SmartProto.toJSON() called in wrong context, this: ',this);
+			}
+			console.log()
+			return this._private.data;
 		}
 
 		/*
@@ -526,7 +530,7 @@
 		*/
 		SmartProto.prototype.toString=function(){
 			if(!isSmart(this)){
-				throw new Error('SmartProto.toString() called in wrong context. this.constructor.name: '+this.constructor.name);
+				BetterLog._syslog.throw('SmartProto.toString() called in wrong context, this: ',this);
 			}
 			return JSON.stringify(this._private.data);
 		}
@@ -1507,6 +1511,7 @@
 			return value;
 		}
 
+
 		//Private function used internally to facilitate intercepting 'get'
 		function _get(key){
 			var o=this._private.options; //shortcut
@@ -1521,7 +1526,8 @@
 					return x;
 				}else{
 					//...else we just copy the whole thing
-					return cX.copy(this);
+					console.log("Returning a copy of this smarty");
+					return cX.copy(this._private.data);
 				}
 			}
 
@@ -1581,15 +1587,16 @@
 		*
 		* @return object|array
 		*/
-		SmartProto.prototype.stupify=function(key=undefined){
-			if(key)
-				return cX.copy(this.get(key))
-			else{
-				return cX.copy(this)
+		SmartProto.prototype.copy=SmartProto.prototype.stupify=function(key=undefined){
+			var val=this.get(key);
+
+			//If the children havn't already been made stupid...
+			if(this._private.options.getLive||this._private.options.children=='smart'){
+				//...decouple here...
+				return cX.copy(val);
+			}else{
+				return val; //decoupling already done in _get()
 			}
-		}
-		SmartProto.prototype.copy=function(key){
-			return this.stupify(key);
 		}
 
 
