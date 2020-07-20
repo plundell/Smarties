@@ -551,9 +551,9 @@
 		/*
 		* Get the deepest nested Smarty that has options.children!='smart'. 
 		*
-		* @param array|string|number nestedKeys 	If string|number then this is returned, else we move down, altering the array
-		*												as we go, stoping when children!='smart'. The array will then contain all remaining 
-		*											keys (at least 1)
+		* @param array|string|number nestedKeys 	If string|number then this is returned, else we move down, stoping when children!='smart'. 
+		*												The array will then contain all remaining keys (at least 1). 
+		*												NOTE: if array it gets altered
 		* @opt bool mustExist 		                Default false. If true and the whole key (except the last one) doesn't exist, throw!
 		* @opt function mustBe   	                Default null => get any smarty. Else constructor for smarty we want
 		*
@@ -627,6 +627,9 @@
 		*/
 		function callOnDeepest(method,_arguments){
 			
+			//Make sure to copy a array keys since vv alters them and we don't want external parties having to deal with altered keys
+			_arguments[0]=cX.copy(_arguments[0]);
+
 			var child=this.getDeepestSmarty(_arguments[0]); //this will alter keys if it finds a child
 
 			//If a child exists, then said child should execute, not us
@@ -1928,7 +1931,7 @@
 		* @call(this)
 		*/
 		function setPublicAccessors(key){
-			this._log.traceFrom(`Setting public accessor on '${key}'`);
+			this._log.traceFrom(`Creating public accessor for key '${key}'`);
 			//2020-05-29: Removing this check because I think we'll always want to set this...
 			// if(!this.hasOwnProperty(key)){
 				Object.defineProperty(this,key,{enumerable:true,configurable:true
