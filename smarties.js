@@ -3237,6 +3237,7 @@
 					x.payload.smartLink.Rx=channel;
 				}
 
+				this._log.makeEntry('info',"Prepared smart link:",x.payload).addFrom().exec();
 
 				//Finally return the same object that was passed in
 				return x;
@@ -3332,6 +3333,7 @@
 				
 				var what=[];
 
+				//If we're transmitting changes...
 				if(args.Tx){
 					var transmit=(event)=>{
 						//Prevent sending out events we just received on the same link (see Rx vv)
@@ -3358,6 +3360,7 @@
 					what.push('sending')
 				}
 
+				//If we're receiving changes...
 				if(args.Rx){
 					let evt=args.unisoc.on(args.Rx,(event)=>{
 						
@@ -3624,6 +3627,7 @@
 			* @exported
 			*/
 			let TxRx=['Tx','Rx'];
+			let determineDirection=(x)=>{return (x.Tx?(x.Rx?'BOTH directions':'sending only'):x.Rx?'sending only':'')}
 			function autoLinkUniSoc(x){
 				let t=typeof x, errstr=`Expected a <uniSoc> or an object with .unisoc set, got a ${t}.`
 				if(!x || typeof x!='object')
@@ -3670,34 +3674,41 @@
 					try{
 						//This will fire for all transmits, so first we have to check if it's even a smarty
 						if(payload.data && payload.data.isSmart){
-							let smarty=payload.data; //it WAS as smarty, so for clarity we rename it in here
+							let smarty=payload.data; //it WAS as smarty, so for clarity create a 'smarty' variable
 							let who=payload.id+': '
 							
 							//We're auto-linking live smarties, but if someone tries to do it manually the above isSmart() shouldn't
 							//be truthy and we shouldn't be here... so just make sure no duplication of efforts have been made...							
-							if(payload.smartOptions||payload.smartLink){
-								this.log.warn(who+"Possible bug? Someone has partly prepared the payload for smart linking, but the data/smarty"
-									+"is still live... Did someone forget something? Will not touch it here!",payload);
+							if(payload.smartOptions&&payload.smartLink){
+								let what=determineDirection(payload.smartLink);
+								let logstr=`${who}Smart link already prepared`
+								if(what){
+									this.log.debug(`${logstr}, ${what}`);
+								}else{
+									this.log.note(`${logstr} and explicitly prevented.`);
+								}
 							}else{
+								if(payload.smartOptions||payload.smartLink){
+									this.log.note(`${who}Someone has partly prepared the payload for smart linking, setting payload.${payload.smartOptions?'smartOptions':'smartLink'}, `
+										+`but not ${payload.smartOptions?'smartLink':'smartOptions'}. Will fill in the rest with default on the rest`, payload);
+								}
 								//Determine if/what we're going to link and log it
 								let smartyOptions=cX.subObj(smarty._private.options, TxRx, 'hasOwnDefinedProperty')
-									,opts=Object.assign({},autoLinkDefault,smartyOptions)
-									,logstr=`${who}Payload contained a smarty,`
-									,which=(opts.Tx?(opts.Rx?'BOTH directions':'sending only'):opts.Rx?'sending only':false)
+									,opts=Object.assign({},autoLinkDefault,smartyOptions,payload.smartOptions,payload.smartLink) //if the last 2 don't exist, they have no effect
+									,which=determineDirection(opts)
 								;
 								// console.debug('autolink options:',{result:opts,autoLinkDefault,smartyOptions});
 								if(!which){
 									this.log.note(`${who}Payload contained a smarty, but it will not be linked.`);
 								}else{
-									this.log.info(`${who}Preparing smart payload, ${which}`);
+									this.log.info(`${who}Preparing smart payload for ${which}`);
 									opts.payload=payload; //prepareLink needs the entire payload too...
 									smarty.prepareLink(opts);
-
-									//Finally make the smarty stupid like we were talking about ^
-									// console.log(smarty);
-									payload.data=smarty.stupify();
-									// console.log(payload.data);
 								}
+								
+								//Finally, regardless of ^, make the smarty stupid since we ARE going to send it.
+								payload.data=smarty.stupify();
+								this.log.info('Stupified smarty in payload. Now ready to transmit.',payload);
 							}
 						}
 					}catch(err){
