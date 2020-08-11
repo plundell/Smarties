@@ -17,7 +17,15 @@
 *          the window, like so:
 *                <script src="path/to/libbetter.js">
 *                <script src="path/to/smarties.js">
-*      
+* @protip: You can control what is set in 4 ways:
+*	1. _private.options.children - limits child type and controls behavior of nested smarties
+*   2. _private.options.meta[key|*] - rules about specific keys or all keys, incl a callback .cleanFunc.call(this,value,key,meta) 
+*		which is called BEFORE we check if it's the same value
+*   3. _intercept.set.call(this,event) - called AFTER all other checks have been made and we KNOW we're setting. 
+*		 ŃOTE: this has the implication that event.evt has already been determined and may be wrong, so you may want to look 
+*		       at using meta[*] instead...
+*	4. _instercept.emit.call(this,event) - called AFTER the value has been stored but BEFORE any events are emitted. The 
+*		 BIG DIFFERENCE here is that the callback can be async.
 */
 
 
@@ -155,19 +163,31 @@
 		SmartProto.defaultOptions={
 		//Used by SmartProto
 			defaultValues:null 	//Default values which are set by .reset() (which is called by constructor). Will be ignored if
-								  //$meta is passed
-			,meta:null 			//An object, if passed when creating an object it will run .init() at the end of the constructor. 
-								  //Keys are default keys created by constructor, values are rules about that prop. overrides $defaultValues
+								// $meta is passed
+			,meta:null 			//An object. Keys are default keys created by constructor, values are objects containing one or more
+								// of these rules about that prop.:
+								// 		accepted - string|array - specific accepted values, eg. specific strings etc
+								// 		type - string|array - which types are accepted
+								// 		prepend - string - only used if value is string, this string will be prepended
+								// 		cleanFunc - function - callback that can do anything, it's return value used
+								// 		required - boolean - if true this prop cannot be deleted (but it can be set to null)
+								//      default - any - used if required but by trying to delete
+								//		constant -bool - once set the type cannot be changed
+								// Overrides $defaultValues. Causes .init() to run at the end of constructor. 
+							//ProTip: To pass meta to every child of a SmartArray, use "meta:{'*':{meta:{...}}}"
 			,onlyMeta:false 	//If true, only keys from $meta are allowed
 
 			,constantType:false //If true, when a key is set, it can only be changed to the same type, or null or deleted
 
 			,delayedSnapshot:0 	  //If set to number>0, a copy of all the data on the object will be emitted that many ms after 
 								  //any event
-			,children:'primitive' //accepted 'complex'=> allow obj/arr children (they should not be smart), 'smart'=> children 
-								  //may be smart (either passed in or converted when setting) and their events extended 
-								  //('new'/'delete' on child becomes 'change' on parent). Alternatively you can pass 'string',
-								  //'number' or 'boolean' to limit primitive children further
+			,children:'primitive' //One of the following
+								  //   'primitive' => values can only be string,number,boolean,null 
+								  //   'complex'/'any'=> Anything, but smart children will not be monitored
+								  //   'smart'=> children may be smart (either passed in or converted when setting) and their events extended 
+								  //			('new'/'delete' on child becomes 'change' on parent). 
+								  //Alternatively you can pass 'string'/'number'/'boolean' or 'object'/'array' to limit children further. 
+								  // NOTE: that after init this._private.options.children will be changed to one of 'primitive','complex','smart'
 			
 			,addGetters:true    //if true, enumerable getters and setters will be added/removed when keys are set/deleted
 
@@ -235,7 +255,7 @@
 																				  //creating nested items string-keys create objects and number-keys create arrays... however you
 																				  //could potentially manually change this without issue
 				,options:options
-				,reservedKeys:['_private','_log','_intercept']
+				,reservedKeys:null //set to object at end of constructor
 			}}); 
 
 
@@ -272,9 +292,9 @@
 
 
 
+		//2020-03-21: Not started implementing
 			//If we're using a lookup table...
 			if(this._private.options.valueLookup){
-		//2020-03-21: Not started implementing
 				//For now this only works with primitive children
 				if(this._private.options.children!='primitive'){
 					this._log.warn("options.valueLookup only works if options.children=='primitive'");
@@ -294,7 +314,7 @@
 					this._log.warn("You can't use both 'debounce' and 'throttle', disabling the latter");
 					delete this._private.options.throttle;
 				}
-
+		//2020-08-29 ??: why are these enumerable... 
 				Object.defineProperty(this,'set',{
 					enumerable:true
 					,configurable:true
@@ -345,21 +365,24 @@
 			}
 
 
-
-			//For the sake of not confusing which takes presidence, meta[key].default or defaultValues[key] we simply
-			//don't allow both to be passed
-			if(cX.isEmpty(this._private.options.meta))this._private.options.meta=SmartProto.defaultOptions.meta;
-			if(cX.isEmpty(this._private.options.defaultValues))this._private.options.defaultValues=SmartProto.defaultOptions.defaultValues;
-			if(this._private.options.meta && this._private.options.defaultValues)
-				this._log.makeError("You cannot set both options.meta & options.defaultValues. options:",this._private.options).throw('EINVAL')
-			else if(this._private.options.meta && typeof this._private.options.meta!='object')
-				this._log.throwType("options.meta to be object/array",this._private.options.meta);
-			else if(this._private.options.defaultValues && typeof this._private.options.defaultValues!='object')
-				this._log.throwType("options.defaultValues to be object/array",this._private.options.defaultValues);
+			//If meta is passed we ignore defaultValues
+			if(this._private.options.meta){
+				setupMeta.call(this,this._private.options.meta); // checks type and deletes .defaultValues
+			}else if(this._private.options.defaultValues && typeof this._private.options.defaultValues!='object')
+				this._log.throwType("options.defaultValues to be object/array",this._private.options.defaultValues);{
+			}
 
 
-			//If we got meta... (checks inside...)
-			setupMeta.call(this,this._private.options.meta);
+
+			//Now before we set anything, we want to mark which keys are off limits, which are any methods or
+			//props defined on the smarty
+			{
+				let keys=Object.getOwnPropertyNames(this).concat(
+					Object.getOwnPropertyNames(SmartProto.prototype)
+					,Object.getOwnPropertyNames(this.constructor.prototype)
+				)
+				this._private.reservedKeys=cX.objCreateFill(keys,true);
+			}	
 
 
 			//Now check for defaults (which may just have been set ^)
@@ -409,11 +432,13 @@
 					//no break
 				case 'complex':
 				case 'any':
+				case 'object':
+				case 'array':
 					this._private.localKeyType=cX.makeArray(this._private.localKeyType,'array');
-					if(children=='any')
-						this._private.expectedValTypes='any';
-					else
+					if(children=='complex'||children=='smart')
 						this._private.expectedValTypes=['primitive','array','object'];
+					else
+						this._private.expectedValTypes=children;
 
 					this._private.options.children=children;
 					break;
@@ -469,16 +494,21 @@
 		*/
 		function setupMeta(meta){
 			if(meta){
-				//...we'll be creating new defaultValues, but options.meta WILL NOT CHANGE (important for getSmartOptions() to know)
-				this._private.options.defaultValues={};
-				
-				//Get the "global default"(which we default to null if it doesn't exist)
-				const _default=((meta.hasOwnProperty('*') && meta['*'].hasOwnProperty('default')) ? meta['*'].default : null)
+				cX.checkType('object',meta);
 
+				//...we'll be creating new defaultValues, but options.meta WILL NOT CHANGE (important for getSmartOptions() to know)
+				if(this._private.options.defaultValues){
+					this._log.warn("Meta passed, removing/ignoring defaultValues:",this._private.options.defaultValues)
+					this._private.options.defaultValues=null;
+				}
+
+				//If a default has been passed, we'll augment every non-specified key with that
+				var deflt=meta['*']||{};
+
+				//Go through the keys and...
 				for(let key of Object.keys(meta)){
-					let m=meta[key];
-					//Set the default value on...
-					this._private.options.defaultValues[key]=(m.hasOwnProperty('default') ? m.default : _default);
+					//...augment
+					let m=meta[key]=Object.assign({'default':null},deflt,meta[key]);
 
 					//Make sure that some props are correct/work together
 						if(m.prepend){
@@ -493,6 +523,18 @@
 			return;
 		}
 
+		/*
+		* Set or change meta after a smarty has been created. For ease we only allow this if the object is empty
+		* @param object meta
+		* @return void
+		*/
+		SmartProto.prototype.changeMeta=function(meta){
+			cX.checkType('object',meta);
+			if(this.length)
+				this._log.throwCode("ESEQ","Cannot change meta when data has already been set");
+			setupMeta(meta);
+			return;
+		}
 
 
 
@@ -811,6 +853,8 @@
 		/*
 		* Get the default value for a key, or the "global default" (ie. key '*' when creating smarty with options.defaultValues:{*:foo})
 		*
+		* NOTE: If meta was passed then these have been populated fromt there (see setupMeta)
+		*
 		* @param string|number key
 		*
 		* @return any|undefined 	The default value, or undefined if none exists
@@ -828,6 +872,10 @@
 						return this._private.options.defaultValues['*']; //this could be undefined;
 					}
 				}
+			}else{
+				let meta=this.getMeta(key);
+				if(meta)
+					return meta.default; //can be null, but not undefined
 			}
 			return undefined;
 		}
@@ -855,9 +903,8 @@
 				}
 			}
 
-			//REMEMBER: The default value is always allowed UNLESS it's "empty" and meta.required==true (see below)
 			try{
-				if(value!==this.getDefault(key)){
+				if(value!==meta.default){ //.default is always set
 
 					//If there's a list of acceptable values... null is always accepted
 					if(meta.accepted && !meta.accepted.includes(value)){
@@ -888,20 +935,22 @@
 							//.init() made sure it's a func
 							value=meta.cleanFunc.call(this,value,key,meta);
 							 	//protip: cleanFunc can be bound if need be...
+
+							 //If cleanFunc returns undefined it's the same as failing/throwing
+							if(value==undefined)
+								throw "meta.cleanFunc returned 'undefined'.";
+
 						}catch(err){
-							console.log(this._private.options);
+							//NOTE: the cleanFunc is free to return whatever, even meta.default, but if it throws
+							//      then that means we don't want setting to happen
+							this._log.debug('_private.options:\n',this._private.options);
 							throw err;
 						}
 					}
 					
 				}
 				
-				//Finally, if it's required, make sure we have *something* at this point 
-				//NOTE: this may fail a default==null prop
-				if(meta.required && cX.isEmpty(value)){
-					this._log.makeError(`'${key}' cannot be empty: `+cX.logVar(value)).throw('EEMPTY');
-				}
-				
+			
 				//NOTE: we check meta.constant in commonSet() since we want to know if the evt=='change' which 
 				//		for arrays we determine after this function
 			}catch(err){
@@ -916,17 +965,18 @@
 		/*
 		* Handle setting or changing private data, depending on the new/old values, the type of children etc.
 		*
-		* @param object event 	The event object we're going to emit and return. NOTE: gets manipulated
+		* @param object 		event 		The event object we're going to emit and return. NOTE: gets manipulated
+		* @param string|number 	publicKey 	The key to use for the public getter if applicable (has no effect if not)
+		* @opt NO_LOG_TOKEN 	NO_LOG 		The token to prevent logging...
 		*
 		* @throw <ble>
 		*
-		* @return boolean 		True => the local smarty.set() should emit, false => a child smarty will take
-		*						  care of emitting
+		* @return string 		The outcome, which tells smarty.set() what to do next
 		*
 		* @sets event.value 	If a new smarty is created, else the value from commonPrepareSet() remains
 		* @call(<SmartArray>|<SmartObject>)
 		*/
-		function commonSet(event){
+		function commonSet(event, publicKey, NO_LOG=null){
 			var x=event.__smarthelp__;
 			//Apply some restrictions for change events
 			if(event.evt=='change'){
@@ -951,7 +1001,24 @@
 				try{
 					this._intercept.set.call(this,event); //this method can change the event in any way it pleases...
 				}catch(err){
-					this._log.throwCode('intercept',`Prevented ${event.evt} ${event.key}.`,event,err);
+					//At this point we won't be setting anything
+
+					let prevented=`Prevented ${event.evt} '${event.key}':`;
+					//Check if it was deliberate...
+					if(err=='intercept'){
+						this._log.note(prevented,event);
+					
+						//emit so .setAndWait() knows we're done
+						this.emit('intercept',event);
+						
+						//return early so we don't set anything or emit anything else
+						return;
+					}else{
+						//This works same for .set() and .setAndWait(), so no need to emit 'intercept'
+						this._log.makeError(err).addHandling(prevented,event).throw();
+					}
+
+
 				}
 			}
 
@@ -960,7 +1027,7 @@
 				var c=this._private.options.children; //shortcut
 
 				if(event.evt=='new'){
-					if(arguments[2]!=NO_LOG_TOKEN)
+					if(NO_LOG!=NO_LOG_TOKEN)
 						this._log.trace(`Setting new key '${event.key}' to: ${cX.logVar(event.value)}`);
 
 					if(c=='smart'){
@@ -977,12 +1044,15 @@
 						this._private.data[x.localKey]=event.value;
 					}
 
+					//Since the key is new, we may need a public accessor (if options call for it)
+					setPublicAccessors.call(this,publicKey);
+
 				}else{ //evt=='change'
 					errMsg+='change '
-					if(arguments[2]!=NO_LOG_TOKEN)
+					if(NO_LOG!=NO_LOG_TOKEN)
 						this._log.trace(`Changing key '${event.key}': ${cX.logVar(event.old)} --> ${cX.logVar(event.value)}`);
 
-					if(x.nestedKeys){ //chaning smth non-local
+					if(x.nestedKeys){ //changing smth non-local
 						errMsg+='nested '
 						if(c=='smart'){
 							errMsg+='smarty '
@@ -990,9 +1060,11 @@
 							//Recursively .set() on the local smart child...
 							this.get(x.localKey).set(x.nestedKeys,event.value,event,NO_LOG_TOKEN); //we've already logged ^^
 
-							//...then return false to prevent .set() from emitting anything since the last child will emit
-							//and then that event bubbles up through us getting changed on the way
-							return false; 
+							//...then return early so we don't emit vv. The last child WILL emit and then that event 
+							//bubbles up through us getting changed on the way
+							return; 
+
+							//DevNote: We don't need to worry about setting public getters here, since the evt is not new
 
 						}else{//c=='complex' 
 							errMsg+='complex '
@@ -1013,8 +1085,11 @@
 			}catch(err){
 				this._log.throw(`${errMsg}'${event.key}':`,x,err);
 			}
+			//If we're still running that means the set was successfull AND that we're the deepest child who 
+			//wishes to emit it
+			tripleEmit.call(this,event);
 
-			return true;
+			return;
 		}
 
 
@@ -1139,12 +1214,17 @@
 				var options=cX.copy(this._private.options);
 				 //^NOTE: this will also copy any options relating to the underlying BetterEvents
 				
-				//Default and meta we only pass on stuff intended for that key/child
-				options.defaultValues=this.getDefault(key);
-				cX.isEmpty(options.defaultValues)
-					options.defaultValues=null;
-				let meta=this.getMeta(key);
-				options.meta=meta?meta.meta||null:null; //meta for key/child is not the same as meta for the grandchildren...
+				//For defaultValue and meta, which can be specified per key, we only pass on that which
+				//is intended for that key/child
+					options.defaultValues=this.getDefault(key);
+					cX.isEmpty(options.defaultValues) && options.defaultValues=null;
+
+					let meta=this.getMeta(key);
+					options.meta=(meta?meta.meta:null)||null; 
+					 //here meta refers to the child, while meta.meta refers to all children of that child which is what we 
+					 //want to pass on. To designate meta for all children of a SmartArray eg. you create the parent with 
+					 // 	options.meta:{'*':{meta:{...}}}
+					 //which means options.meta here^ will be {...}
 
 				//If a name is on this, then the name of the child should have the key appended
 				if(options.name)
@@ -1271,7 +1351,7 @@
 				case 'change':
 					this.set(event.key,event.old,revEvt);
 			}
-
+			this._log.note(`Reverted ${event.evt} '${event.key}' to:`,event.old);
 			return;
 		}
 
@@ -1308,13 +1388,19 @@
 				var p=Promise.resolve(), self=this;
 
 				
-				//We can intercept the emit,possibly changing the event
+				//We can intercept the emit, either to change anything about the event OR reverting the changes thus 
+				//supressing the event
 				if(typeof this._intercept.emit=='function'){
-					p=p.then(function tripleEmit_intercept(){return self._intercept.emit.call(self,event)}) //this method can change the event in any way it pleases...
+					p=p.then(function tripleEmit_intercept(){return self._intercept.emit.call(self,event)})
 					   .catch(function tripleEmit_reverting(err){
+					   		//throwing == reverting
 					   		revert.call(self,event);
+					   		
+					   		//In order for .setAndWait() to work we emit this (the event obj has a token <-- will look for)
 					   		self.emit('intercept',event);
-							return self._log.makeError(`Reverted ${event.evt} ${event.key}.`,event,err).reject('intercept');
+
+					   		//Let the err bubble through to last catch vv
+							throw err;
 						})
 					;
 				}
@@ -1334,7 +1420,11 @@
 				})
 
 				//Finally catch and log any errors because nobody is handling them
-				.catch(this._log.error);
+				.catch(err=>{
+					//Logging the error can be supressed by throwing 'intercept' in the intercepting function
+					if(err!='intercept')
+						self._log.makeError(err).addHandling('The offending event:',event).exec();
+				})
 
 			}catch(err){
 				this._log.error("BUGBUG: Failed to emit event:",event,err);
@@ -1383,8 +1473,11 @@
 					return 'off' 
 				}
 			},index)
-
-			this.set(key,value,event);
+			try{
+				this.set(key,value,event);
+			}catch(err){
+				reject()
+			}
 			return promise;
 
 		}
@@ -1629,6 +1722,16 @@
 			if(event.old==undefined)
 				return event.old; //ie. undefined
 			
+			//If meta exists for this key, and says it can't be deleted...
+			var meta=this.getMeta(key);
+			if(meta.required){
+				if(meta.hasOwnProperty('default'))
+					return this.set(key,meta.default,event);
+				else
+					this._log.throwCode("EILLEGAL",`Cannot delete required key ${key}`);
+			}
+
+
 			var x=event.__smarthelp__;
 
 			event.evt='delete';
@@ -1785,13 +1888,99 @@
 			}
 		}
 
-		SmartProto.prototype.replicateTo=function(target){
-			this.on('event',target.replicate.bind(target))	
-		}
 
-		SmartProto.prototype.replicateFrom=function(source){
-			source.on('event',this.replicate.bind(this))	
-		}
+		/*
+		* Shortcuts to start and stop replicating one smarty to another
+		*
+		* Since far from all smarties will use replication, it's unecessary to create a Map for each one, instead that is
+		* done when we start replicating
+		*/
+			/*
+			* Since far from all smarties will use replication, it's unecessary to create a Map for each one... this
+			* checks and sets one up when needed
+			*
+			* @param <SmartProto> source 	The smarty where the data comes from, which implies where we'll listen for events
+			* @param <SmartProto> target 	The smarty where the data is going
+			*
+			* @return <Listener>|undefined	A Listener object from the BetterEvents class if we're already replicating, else undefined
+			*/
+			function alreadyReplicating(source,target){
+				var map=source._private.replications||(source._private.replications=new Map());
+				return map.get(target);
+			}
+
+			/*
+			* Start replicating changes from one smarty to another
+			*
+			* @param <SmartProto> source 	@see alreadyReplicating()
+			* @param <SmartProto> target 	@see alreadyReplicating()
+			*
+			* @return boolean 		True if replication was started now, false if it was already running. Regardless, after this function
+			*						returns replication is happening
+			*/
+			function startReplicating(source,target){
+				if(!alreadyReplicating(source,target)){
+					source._private.replications.set(target,source.on('event',target.replicate.bind(target)));
+					return true;
+				}else{
+					return false;
+				}
+			}
+
+			/*
+			* Stop previously started replication
+			*
+			* @param <SmartProto> source 	@see alreadyReplicating()
+			* @param <SmartProto> target 	@see alreadyReplicating()
+			*
+			* @return boolean 		True if replication was stopped now, false if it was not previously running. Regardless, no replication 
+			*						is happening after this function returns
+			*/
+			function stopReplicating(source,target){
+				if(alreadyReplicating(source,target)){
+					source.off('event',source._private.replications.get(target)); //stop lisetning for changes
+					source._private.replications.delete(target); //delete from map so we know it's gone
+					return true;
+				}else{
+					return false;
+				}
+			}
+
+			/*
+			* Call on source object to send changes to another (target) object
+			* @param <SmartProto> target 		@see alreadyReplicating()
+			* @return boolean					@see startReplicating()
+			*/
+			SmartProto.prototype.replicateTo=function(target){
+				return startReplicating(this,target);
+			}
+			
+			/*
+			* Call on target object to monitor another object for changes and replicate them here
+			* @param <SmartProto> target 		@see alreadyReplicating()
+			* @return boolean					@see startReplicating()
+			*/
+			SmartProto.prototype.replicateFrom=function(source){
+				return startReplicating(source,this);
+			}
+			
+			/*
+			* Call on source object to stop sending changes to another (target) object
+			* @param <SmartProto> target 		@see alreadyReplicating()
+			* @return boolean					@see startReplicating()
+			*/
+			SmartProto.prototype.stopReplicatingTo=function(target){
+				return stopReplicating(this,target);
+			}
+
+			/*
+			* Call on target object that is receiving changes from another (source) object to stop these updates
+			* @param <SmartProto> target 		@see alreadyReplicating()
+			* @return boolean					@see startReplicating()
+			*/
+			SmartProto.prototype.stopReplicatingFrom=function(source){
+				return stopReplicating(source,this);
+			}
 
 
 
@@ -1924,13 +2113,20 @@
 
 
 		/*
-		* Set public enumerable getters/setters based on options.publicGetters & .publicSetters
+		* Set public enumerable getters/setters based on options.addGetters (which is checked here and
+		* this call silently ignored if it's false)
 		*
-		* @param 
+		* @param string|number key
+		*
 		* @access private
 		* @call(this)
 		*/
-		function setPublicAccessors(key){
+		function setPublicAccessors(key,event=null){
+		
+			//Make sure we're acutally using public getters...
+			if(!this._private.options.addGetters)
+				return;
+
 			this._log.traceFrom(`Creating public accessor for key '${key}'`);
 			//2020-05-29: Removing this check because I think we'll always want to set this...
 			// if(!this.hasOwnProperty(key)){
@@ -2122,7 +2318,7 @@
 			* @emit new, change, delete (via this.delete if value==null), event
 			*
 			* @throw TypeError
-			* @return mixed 	The previously set value (which could be the same as the new value)
+			* @return mixed 	The previously set value (which could be the same as the new value if nothing changed)
 			*/
 			SmartObject.prototype.set=function(key,value,event){
 				//Undefined is the same as deleting. This is used eg. by assign(). There is a risk that it's passed in by mistake, but
@@ -2157,19 +2353,12 @@
 				//we may need vv
 				var x=event.__smarthelp__;
 
-				//Do the actual setting. If we're setting a smart child then...
-				var emitHere=commonSet.call(this,event,arguments[3]);
-
-				//If a new property was added and we're using getters...
-				if(event.evt=='new' && this._private.options.addGetters)
-					setPublicAccessors.call(this,x.localKey);
+				//Do the actual setting.
+				commonSet.call(this,event,x.localKey,arguments[3]);
 				
-				//We only emit from the nested-most smarty... which may be where we are right now!
-				if(emitHere)
-					tripleEmit.call(this,event);
-				
-
+				//Return the old value. 
 				return event.old;
+				// DevNote: if _intercept.set prevented setting, then new and old value will be same
 			}
 
 
@@ -2398,6 +2587,7 @@
 				moveEvent:false    	//if false move() will use delete() and set(), else a custom 'move' event will be emitted
 				,smartReplace:true  //if true replace() will try to figure out changes to minimize # of events, else all will 
 							    	//just be deleted/set
+				,childMeta:false 	//If true, the passed in meta is assumed to concern each child
 			}
 
 
@@ -2486,18 +2676,12 @@
 					this._private.data.splice(x.localKey,0,'__placeholder__'); 
 				}
 
-				//Do the actual setting, and check if we're setting a smart child...
-				let emitHere=commonSet.call(this,event,arguments[3]);
-			
-				//The array just got longer, add an enumerable getter to this object. Do this after we've succesfully set
-				if(event.evt=='new' && this._private.options.addGetters)
-					setPublicAccessors.call(this,this.length-1); //call length again to get the new length
-				
-				//We only emit from the nested-most smarty... which may be where we are right now!
-				if(emitHere)
-					tripleEmit.call(this,event); 
-
+				//Do the actual setting
+				let emitHere=commonSet.call(this,event,this.length-1,arguments[3]);
+							
+				//Return the old value. 
 				return event.old;
+				// DevNote: if _intercept.set prevented setting, then new and old value will be same
 
 			}
 
@@ -3288,7 +3472,7 @@
 			*/
 			function setSmartOptions(opts){
 				setChildren.call(this,opts.children); //should be set
-				setMeta.call(this,opts.meta); //may or may not be set, but this method checks
+				setupMeta.call(this,opts.meta); //may or may not be set, but this method checks
 				this._private.options.constantType=opts.constantType;
 			}
 
@@ -3770,97 +3954,3 @@
 	*/
 			// }
 
-
-
-		/******** 2 link-related functions used before we have an instance *******/
-			/*
-			* Create a smarty from an incoming uniSoc payload
-			*
-			* @param object payload 	The entire payload received by uniSoc
-			*
-			* @return <SmartArray>|<SmartObject>
-			* @call(<uniSoc>)
-			*/
-			// function receiveSmarty(payload){
-			// 	if(!this.isUniSoc)
-			// 		cX._log.makeError('Call receiveSmarty() as a uniSoc instance').throw();
-
-			// 	try{
-			// 		cX.checkType('object',payload);
-			// 		if(payload.smartOptions=='done'){
-			// 			if(isSmart(payload.data))
-			// 				return payload.data
-			// 			else
-			// 				throw "payload.smartOptions was already set to 'done', but .data was not a smarty";
-			// 		}
-			// 		cX.checkProps(payload,{data:['object','array'],smartOptions:'object', smartLink:'object'})
-			// 	}catch(err){
-			// 		this.log.makeError("Unexpected payload when trying to receive smarty:",payload,err).throw('EINVAL');		
-			// 	}
-
-			// 	payload.data=createSmarty(payload.data,payload.smartOptions);
-
-			// 	//Prevent this method from being called again
-			// 	payload.smartOptions='done';
-
-			// 	payload.data.initLink(this,payload, 'flip');//this==uniSoc, flip==we want their Tx to go to our Rx
-			// 	 //^logging happens inside
-
-			// 	return payload.data;
-			// }
-
-
-
-			/*
-			* Shorthand for requesting a smart object and hooking up the response
-			*
-			* NOTE: This method will not be necessary if you load uniSoc with the smart class passed in, in which case receiveSmarty()
-			*		will be used automatically on all incoming
-			*
-			* @return Promise 		@see uniSoc.request, but response 'data' will be a smart instance
-			* @call(<uniSoc>)
-			*/
-			// function requestSmarty(...args){
-				
-			// 	//The key to requesting a smarty is to pass along a callback (even if you just want a single response), 
-			// 	//since the callback will get called with (err,data,payload) and we need that payload		
-
-			// 	var argsObj=this.parseArgs.apply(this,args);
-
-			// 	if(argsObj.callback){
-			// 		//If one already exists, just wrap it so we can receiveSmarty() before calling it...
-			// 		var callback=args.callback;
-			// 		args.callback=(err,data,payload)=>{
-			// 			if(err)
-			// 				return callback(err,data,payload)
-			// 			else{
-			// 				try{
-			// 					return callback(err,receiveSmarty(this,payload),payload)
-			// 				}catch(e){
-			// 					return callback(err,data,payload)
-			// 				}
-			// 			}
-			// 		}
-			// 		//...then request like normal
-			// 		return this.request(argsObj);
-
-			// 	}else{
-			// 		//We want to return a promise...
-			// 		var {promise,resolve,reject}=cX.exposedPromise();
-			// 		argsObj.callback=(err,data,payload)=>{
-			// 			if(err)
-			// 				reject(err);
-			// 			else{
-			// 				try{
-			// 					resolve(receiveSmarty(this,payload));
-			// 				}catch(e){
-			// 					reject(e);
-			// 				}
-			// 			}
-			// 			//We're only expecting a single response, so cancel the callback after;
-			// 			return 'cancel';
-			// 		}
-			// 		//Now request like normal, but resolve with our custom promise^
-			// 		return this.request(argsObj).then(()=>promise);
-			// 	}
-			// }
