@@ -487,13 +487,23 @@
 		}
 
 		/*
-		* Init stuff given options.meta is any were passed. Used by SmartProto() and receiveAndLink()
-		* @param object|undefined meta 
-		* @return void;
+		* Clean and set meta options
+		*
+		* @param object|undefined  meta       If undefined it will delete the currently set meta
+		* @param bool              overwrite  Default true => replace all existing meta. False =>
+		*
+		* @return void
+		* @set this._private.options.meta
+		*
 		* @call(<SmartProto>)
 		*/
-		function setupMeta(meta){
-			if(meta){
+		function setupMeta(meta,overwrite=true){
+			
+			if(!meta){
+				//Allow deleting...
+				delete this._private.options.meta
+
+			}else{
 				cX.checkType('object',meta);
 
 				//...we'll be creating new defaultValues, but options.meta WILL NOT CHANGE (important for getSmartOptions() to know)
@@ -502,38 +512,75 @@
 					this._private.options.defaultValues=null;
 				}
 
-				//If a default has been passed, we'll augment every non-specified key with that
-				var deflt=meta['*']||{};
+				//We don't want to apply any changes until we've parsed everything, plus we'll either want to overwrite or append existing,
+				//so we create a de-coupled object that we can start altering...
+				var cleaned=Object.assign({},(overwrite?undefined:this._private.options.meta));
 
-				//Go through the keys and...
+				var glob=meta['*']||{}; //so we don't have to keep checking vv
+
+				//Go through $meta and append 'cleaned' (which may or may not contain old data, see^)
 				for(let key of Object.keys(meta)){
-					//...augment
-					let m=meta[key]=Object.assign({'default':null},deflt,meta[key]);
 
+					//Make sure the key exists on the cleaned object
+					cleaned[key]=cleaned[key]||{};
+
+					//One prop is special, 'meta', which refers to instructions to be sent to children. Since it's an object we want to 
+					//"deep merge" it, so try combining it now
+					let childMeta={meta:Object.assign({},cleaned[key].meta,glob.meta,meta[key].meta)};
+						//NOTE: we're not dealing with nested .meta props here...not yet anyway
+
+					//Now combine...
+					let m=Object.assign(cleaned[key],glob,meta[key],childMeta);
+				
 					//Make sure that some props are correct/work together
-						if(m.prepend){
-							if(m.type && m.type!='string')
-								this._log.makeError("If using meta.prepend then meta.type needs to be string, not:",m.type).throw('EMISMATCH');
-							m.type='string';
-						}
+					if(m.prepend){
+						if(m.type && m.type!='string')
+							this._log.makeError("If using meta.prepend then meta.type needs to be string, not:",m.type).throw('EMISMATCH');
+						m.type='string';
+					}
 
-						cX.checkType(['undefined','function'],m.cleanFunc);
+					cX.checkType(['undefined','function'],m.cleanFunc);
 				}
+
 			}
+			
+			//'cleaned' now contains all the stuff we want to store, and since we're running there were no problems, so just replace
+			//the existing stuff
+			this._private.options.meta=cleaned;
+
 			return;
 		}
 
 		/*
-		* Set or change meta after a smarty has been created. For ease we only allow this if the object is empty
+		* Set or change meta after a smarty has been created. 
+		*
 		* @param object meta
-		* @return void
+		* @flag 'overwrite' 	If passed all existing meta will be overwritten, else just concated/appended
+		*
+		* @return object|array|undefined 	Key/values that are deleted as a response to the changed meta, or undefined if nothing was removed
 		*/
-		SmartProto.prototype.changeMeta=function(meta){
-			cX.checkType('object',meta);
-			if(this.length)
-				this._log.throwCode("ESEQ","Cannot change meta when data has already been set");
-			setupMeta(meta);
-			return;
+		SmartProto.prototype.changeMeta=function(meta,overwrite=false){
+			//Start by setting the new meta...
+			setupMeta(meta,overwrite);
+
+			//If data has already been set it will need to be subjected to the new meta. 
+			var deleted;
+			if(this.length){
+				deleted=new this._private.data.constructor();
+				this.forEachBackwards((val,key)=>{ //go backwards so deleting keys vv don't mess with arrays
+					try{
+						this.set(key,val); //most of the time this should do nothing, because we're setting the same value...	
+					}catch(err){
+						deleted[key]=this.delete(key); //...but new validation may fail in which case remove it
+					}
+				})
+			}
+
+			//Return any deleted data or undefined
+			if(Object.keys(deleted).length){
+				this._log.warn("Changed meta which caused the following data to be deleted:",deleted,'Args:',arguments);
+			}
+			return deleted;
 		}
 
 
@@ -838,17 +885,22 @@
 		* Get the meta for a specific key, or the "global meta" (ie. key '*' when creating smarty with options.meta:{*:{}})
 		*
 		* @return object|undefined
+		* @call(<SmartArray>|<SmartObject>)
 		*/
-		SmartProto.prototype.getMeta=function(key){
+		function getMeta(key){
 			if(this._private.options.meta){
-				if(this._private.options.meta.hasOwnProperty(key)){
+				if(this._private.options.meta.hasOwnProperty(key))
+					//If meta for this specific key exists, get that. Remember: When meta was setup any global '*' stuff 
+					//was incorporated into each key, so no need to get that here
 					return this._private.options.meta[key];
-				}else{
-					return this._private.options.meta['*']; //this could be undefined;
-				}
+				else 
+					return return this._private.options.meta['*']; //may be undefined
 			}
+
+
 			return undefined;
 		}
+
 
 		/*
 		* Get the default value for a key, or the "global default" (ie. key '*' when creating smarty with options.defaultValues:{*:foo})
@@ -860,25 +912,48 @@
 		* @return any|undefined 	The default value, or undefined if none exists
 		*/
 		SmartProto.prototype.getDefault=function(key){
-			if(this._private.options.defaultValues){
-				if(!key){
-					let d=cX.copy(this._private.options.defaultValues);
-					delete d['*'];
-					return d;
-				}else{
-					if(this._private.options.defaultValues.hasOwnProperty(key)){
-						return this._private.options.defaultValues[key];
-					}else{
-						return this._private.options.defaultValues['*']; //this could be undefined;
-					}
-				}
-			}else{
-				let meta=this.getMeta(key);
-				if(meta)
-					return meta.default; //can be null, but not undefined
+			if(key==undefined){
+				this._log.warn("You used .getDefault() when you probably wanted .getDefaults()...");
+				return undefined;
 			}
+			//If meta exists then defaults are ignored, even if no meta exists for that key, but defaults do
+			if(this._private.options.meta){
+				let meta=getMeta.call(this,key);
+				if(meta)
+					return meta.default; //this could be undefined
+			
+			}else if(this._private.options.defaultValues){
+				if(this._private.options.defaultValues.hasOwnProperty(key)){
+					return this._private.options.defaultValues[key];
+				}else{
+					return this._private.options.defaultValues['*']; //this could be undefined;
+				}
+			}
+
 			return undefined;
 		}
+
+
+		/*
+		* Get a lookup object with default keys and their values (used eg. by .reset())
+		*
+		* NOTE: This will not include the '*' key
+		*
+		* @return object
+		*/
+		SmartProto.prototype.getDefaults=function(){
+			var d;
+			if(this._private.options.meta){
+				d=cX.getChildProps(this._private.options,'default'); //only children that have defaults will be included
+			}else if(this._private.options.defaultValues){
+				d=cX.copy(this._private.options.defaultValues);
+			}else{
+				return undefined;
+			}
+			delete d['*'];
+			return d;
+		}
+
 
 
 		/*
@@ -894,7 +969,7 @@
 		*/
 		function applyMeta(key,value){
 			//Is there meta for this key?
-			let meta=this.getMeta(key);
+			let meta=getMeta.call(this,key);
 			if(!meta){
 				if(this._private.options.onlyMeta){
 					this._log.makeError("Smarty only allowing pre-defined keys and this is not one: "+key).throw("EINVAL");
@@ -904,7 +979,7 @@
 			}
 
 			try{
-				if(value!==meta.default){ //.default is always set
+				if(!meta.hasOwnProperty('default') || value!==meta.default){ 
 
 					//If there's a list of acceptable values... null is always accepted
 					if(meta.accepted && !meta.accepted.includes(value)){
@@ -981,7 +1056,7 @@
 			//Apply some restrictions for change events
 			if(event.evt=='change'){
 				//Last .meta check...
-				let meta=this.getMeta(event.key);
+				let meta=getMeta.call(this,event.key);
 				if(meta && meta.constant){
 					//If the prop is constant it's not allowed to change UNLESS it's changing away from the default (this is useful
 					//when the default was not explicitly specified and we intend to change it once only)
@@ -1216,15 +1291,14 @@
 				
 				//For defaultValue and meta, which can be specified per key, we only pass on that which
 				//is intended for that key/child
+				let meta=getMeta.call(this,key);
+				if(meta){
+					//ProTip, if you want the same meta to be passed onto all children use meta['*'].meta when creating the parent
+					options.meta=meta.meta||null;
+				}else{
 					options.defaultValues=this.getDefault(key);
 					cX.isEmpty(options.defaultValues) && options.defaultValues=null;
-
-					let meta=this.getMeta(key);
-					options.meta=(meta?meta.meta:null)||null; 
-					 //here meta refers to the child, while meta.meta refers to all children of that child which is what we 
-					 //want to pass on. To designate meta for all children of a SmartArray eg. you create the parent with 
-					 // 	options.meta:{'*':{meta:{...}}}
-					 //which means options.meta here^ will be {...}
+				}
 
 				//If a name is on this, then the name of the child should have the key appended
 				if(options.name)
@@ -1723,7 +1797,7 @@
 				return event.old; //ie. undefined
 			
 			//If meta exists for this key, and says it can't be deleted...
-			var meta=this.getMeta(key);
+			var meta=getMeta.call(this,key);
 			if(meta.required){
 				if(meta.hasOwnProperty('default'))
 					return this.set(key,meta.default,event);
@@ -1796,24 +1870,23 @@
 			// currently set (which may entail deleting said key)
 			if(!key || key=='*'){
 				
-				//NOTE: in the constructors we make sure defaultValues is right type and not empty
-
-				if(!this._private.options.defaultValues){
+				//Check if we have any defaults, else this is the same as emtpying...
+				var defaultKeys=Object.keys(this.getDefaults())
+				if(!defaultKeys.length){
 					this._log.debug(`No default values set, emptying...`);
 					return this.empty();
 				}
 
-				//Get unique list of keys, all that are currently set and all in default... that way keys not in default 
-				//get deleted and keys in default get set/changed
-				var keys=this.keys().concat(Object.keys(this.getDefault())).filter(cX.uniqueArrayFilter);
-				// this._log.warn("KEYS:",keys);
+				//Combine default keys with those currently set, we'll be calling this method on all of them which will
+				//delete those without defaults and reset those with...
+				var keys=this.keys().concat(defaultKeys).filter(cX.uniqueArrayFilter);
 
 				//Especially for arrays it's important we set key 0 first since this may be empty and things have 
 				//to remain sequential, hence we shift
 				this._log.debug('Resetting all keys:',keys);
-				var key, oldValues=cX.copy(this._private.data);
+				var oldValues=new this._private.data.constructor();
 				while(key=keys.shift()){
-					this.reset(key);
+					oldValues[key]=this.reset(key);
 				}
 
 				return oldValues
@@ -2077,8 +2150,9 @@
 		SmartProto.prototype.addState=function(name, state, options=[]){
 			cX.checkTypes(['string','array'],[name,options]);
 
-			if(options.includes('defaults') && this._private.options.defaultValues)
+			if(options.includes('defaults')){
 				state=Object.assign({},this.getDefault(),state);
+			}
 
 			if(options.includes('replace'))
 				this._private.states[name]=this.replace.bind(this,state);
@@ -2485,6 +2559,22 @@
 				
 				return;
 			}
+
+			/*
+			* Call a function for each prop, but go through them in reverse
+			*
+			* @param function fn
+			*
+			* @return void;
+			*/
+			SmartObject.prototype.forEach=function(fn){
+				cX.checkType('function',fn,'SmartObject.forEach');
+
+				this.entries().reverse().forEach(arr=>fn.call(this,arr[1],arr[0],this))
+				
+				return;
+			}
+
 
 			/*
 			* Call a function for each prop UNTIL said function returns truthy, then return that prop
