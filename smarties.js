@@ -1201,6 +1201,7 @@
 			if(typeof this._intercept[which]=='function'){
 				try{
 					return this._intercept[which].apply(this,args); //this method can change the event in any way it pleases...
+					 //NOTE: we don't always care what it returns...
 				}catch(err){
 					//At this point we won't be setting anything, but question is if we'll fail silently (causing .set() to 
 					//return the old (ie. current) value), or bubble (causing .set() to throw and the external caller to 
@@ -1457,17 +1458,19 @@
 		*/
 		function commonCommitSet(event,pubKey){
 
+			//Finaly sanity check that the value isn't undefined....
+			if(typeof event.value=='undefined')
+				this._log.throwCode("BUGBUG","Somehow the value has been made undefined, cannot set it.");
+
 			//Possibly intercept...
 			if(intercept.call(this,'commit',[event])==INTERCEPT_TOKEN)
 				return INTERCEPT_TOKEN;
+			//...and just make sure the intercept didn't set it to undefined
+			if(typeof event.value=='undefined')
+				this._log.throwCode("EINVAL","intercept.commit() set value to undefined, cannot set it.")
 			
 			
-			//Final sanity check that we're not setting 'undefined'                               ...apart from setting the value to 'undefined'
-				if(typeof event.value=='undefined')
-					this._log.throwCode("EINVAL","intercept.commit() set value to undefined, cannot set it.")
-			}else if(event.value===undefined){
-				this._log.throwCode("BUGBUG","Somehow the value has been made undefined, cannot set it.");
-			}
+			
 			
 
 			try{
