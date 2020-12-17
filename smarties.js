@@ -1250,7 +1250,7 @@
 			try{
 				//First possibly intercept
 				var arr;
-				switch(arr=intercept('prepare',[key,value,event])){
+				switch(arr=intercept.call(this,'prepare',[key,value,event])){
 					case INTERCEPT_TOKEN: return INTERCEPT_TOKEN;
 					case SKIP_TOKEN: break;
 					default:
