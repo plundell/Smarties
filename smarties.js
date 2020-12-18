@@ -1192,7 +1192,7 @@
 
 		/*
 		* @param string which              'commit' or 'prepare'
-		* @param array|<arguments> args    The args to call the intercept with
+		* @param array|<arguments> args    The args to call the intercept with. NOTE: the last item should be an event obj
 		*
 		* @return mixed|INTERCEPT_TOKEN|SKIP_TOKEN
 		* @call(<SmartProto>)
@@ -1206,7 +1206,7 @@
 					//At this point we won't be setting anything, but question is if we'll fail silently (causing .set() to 
 					//return the old (ie. current) value), or bubble (causing .set() to throw and the external caller to 
 					//have to handle the intercept)?
-
+					let event=args[args.length-1];
 					let prevented=`Prevented ${event.evt} '${event.key}' at ${which}-stage:`;
 					//Check if it was deliberate...
 					if(err=='intercept'){
@@ -1937,7 +1937,7 @@
 		function checkMultiSet(data,checkSame=false){
 			
 			if(bu.isEmpty(data))
-				return;
+				return undefined;
 
 			//The data should be the same type as our data
 			if(dataType(data)!=dataType(this))
@@ -1980,6 +1980,10 @@
 				//First we need a list of entries, since the keys may be arrays pointing to multiple layers
 				if(flags.includes('entries')){
 					bu.checkTypedArray(data,'array'); //make sure all items within the array are also arrays
+					if(bu.isEmpty(data)){
+						this._log.trace("Empty list of entries passed in, nothing to assign...");
+						return undefined;
+					}
 					var entries=data;
 
 				}else{
@@ -2002,14 +2006,14 @@
 					//      being changed
 				}
 
-				this._log.trace("Assigning multiple values:",entries);
+				var remaining=entries.length;
+				this._log.trace(`Assigning ${remaining} values:`,entries);
 				
 				//Set each value, storing the old value if there where any changes
 				var oldValues=newDataConstructor(this);
 				var noEmit=flags.includes('noEmit');
 				var failed=flags.includes('tryAll')?[]:undefined;
-				var remaining=entries.length;
-				for(let i of entries){
+				for(let i in entries){
 					let key=entries[i][0]
 						,value=entries[i][1]
 					;
