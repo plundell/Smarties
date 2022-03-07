@@ -298,7 +298,6 @@
 			{
 				let logOptions=bu.subObj(options,Object.keys(BetterLog.defaultOptions),'excludeMissing');
 				let log=new BetterLog(this,logOptions);
-				this._betterEvents.onerror=log.error;
 				Object.defineProperty(this,'_log',{enumerable:false,value:log});
 
 				let what='smart '+Array.isArray(this._private.data)?'array':'object';
@@ -473,7 +472,9 @@
 		*/
 		SmartProto.prototype.toJSON=function(){
 			if(!isSmart(this)){
-				BetterLog._syslog.throw('SmartProto.toJSON() called in wrong context, this: ',this);
+				if(this!=SmartProto.prototype)
+					console.debug('SmartProto.toJSON() was called in an unexpected context:\n',this);
+				return this;
 			}
 			return this._private.data;
 		}
@@ -483,7 +484,9 @@
 		*/
 		SmartProto.prototype.toString=function(){
 			if(!isSmart(this)){
-				BetterLog._syslog.throw('SmartProto.toString() called in wrong context, this: ',this);
+				if(this!=SmartProto.prototype)
+					console.debug('SmartProto.toString() was called in an unexpected context:\n',this);
+				return Object.prototype.toString(this);
 			}
 			return JSON.stringify(this._private.data);
 		}
@@ -493,7 +496,9 @@
 		*/
 		SmartProto.prototype.toLocaleString=function(){
 			if(!isSmart(this)){
-				BetterLog._syslog.throw('SmartProto.toLocaleString() called in wrong context, this: ',this);
+				if(this!=SmartProto.prototype)
+					console.debug('SmartProto.toLocaleString() was called in an unexpected context:\n',this);
+				return Object.prototype.toLocaleString(this);
 			}
 			return JSON.stringify(this.map(Object.prototype.toLocaleString));
 		}
@@ -1304,7 +1309,7 @@
 
 				//If the local event has changed we check rules about .constant and .constantType
 				if(localEvent.evt=='change' && localMeta){
-					applyMeta.call(this,meta ,localEvent.key, localEvent.value, localEvent.old); //DevNote: including .old causes the second check
+					applyMeta.call(this,localMeta ,localEvent.key, localEvent.value, localEvent.old); //DevNote: including .old causes the second check
 				}
 
 
@@ -2427,7 +2432,7 @@
 		*
 		* @param array|strings...|numbers... keys 		A list of keys to get. Nested keys OK
 		*
-		* @return array|object     Type matches instance
+		* @return array|object     Type matches instance (not smart)
 		*/
 		SmartProto.prototype.subObj=function(...keys){
 			if(keys.length==1&&Array.isArray(keys[0]))
@@ -2529,7 +2534,7 @@
 		}
 
 		/*
-		* Get the first value that matches a test
+		* Get a new subobject of all key/values that match a test
 		*
 		* @param any|function test 		@see findIndex
 		*
@@ -3753,7 +3758,12 @@
 			* @throw TypeError
 			* @return primitive|array 	@see @return of this.set()
 			*/
-			SmartArray.prototype.splice=function(index,...values){
+			SmartArray.prototype.splice=function(index,deleteCount,...values){
+				if(arguments.length==2 || typeof deleteCount!='number'){
+					values.unshift(deleteCount);
+					deleteCount=0;
+					this._log.warn("DEPRECATED: arg#2 to .splice() should be the deleteCount (like the native splice method)");
+				}
 				// console.warn("SPLICE GOT:",index,values);
 				if(values.length==1)
 					return this.set(index,values[0],true);
@@ -3770,30 +3780,32 @@
 			*
 			* @emit set
 			*
-			* @return array 	Array of @see @return this.set()
+			* @return this
 			*/
 			SmartArray.prototype.concat=function(...arrays){
-				//If the first one isn't an array, throw! the rest can be whatever
-				bu.checkType('array',arrays[0]);
-
+				var inserted=0;
 				for(let arr of arrays){
-					if(Array.isArray(arr)){
-						var l=arr.length
-						if(!l){
-							this._log.trace("Concat called with empty array");
-							return undefined;
-						}else{
-							this._log.debug("Concating multiple values:",arr);
-							arr.forEach(value=>this.push(value)); //don't change to forEach(this.push), it'll reset the scope
-							return this;
-						}
-					}else if(arr){
-						this._log.warn('Skipping: ',arr);
-					}else{
-						this._log.trace('Skipping: '+String(arr))
+					if(arr==undefined){
+						continue;
 					}
-					
+					if(Array.isArray(arr)){
+						for(let value of arr){
+							this.push(value);
+							inserted++;
+						}
+					}else{
+						this.push(arr); //single item
+						inserted++;
+					}
 				}
+
+				if(inserted){
+					this._log.trace(`Pushed ${inserted} items to array`);
+				}else{
+					this._log.note('No items added to array');
+				}	
+						
+				return this;
 			}
 	
 
