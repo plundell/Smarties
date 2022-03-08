@@ -2496,7 +2496,7 @@
 		*
 		* @param mixed test 		A function that will be passed (item,index) or a any value that will be tested === against each item
 		*
-		* @return array[number] 	An array of numbers, or an empty array
+		* @return array[number] 	An array of keys, or an empty array
 		*/
 		SmartProto.prototype.findIndexAll=function(test){
 			var arr=[];
