@@ -447,6 +447,29 @@
 		}
 
 
+		/*
+		* Implement the Iterator protocol using a Generator function. 
+		* See https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Iterators_and_Generators
+		*
+		* NOTE: This makes for..of work
+		* 
+		* FutureDev: We probably don't want to try and override the default for..in behaviour which is to loop over
+		*            all enumerable properties along the prototype chain... not sure but it feeeels bad
+		*/
+		SmartProto.prototype[Symbol.iterator]=function* valueIterator(){
+			//We get a static list of the keys now, which means if anything is added to the 
+			//smarty during the loop it won't be included
+			let keys=this.keys();
+
+			//Then loop over those keys...
+			while(keys.length){
+				//...fetching one value at a time and yielding it 
+				yield this.get(keys.shift());
+				  //DevNote: Javascript will pause the execution now and run one iteration of the for..of loop
+			}
+			return this;
+		}
+
 
 		/*
 		* @return array       [ [ ['nested','key'] , value-at-nested-key ], ...]
