@@ -3339,6 +3339,18 @@
 				//future dev: add default options here
 			}; 
 
+			/**
+			* Get the combined default options for SmartArray
+			* @return object
+			*/
+			SmartObject.prototype.getDefaultOptions=function(){
+				return Object.assign(
+					{}
+					,SmartProto.defaultOptions
+					,SmartObject.defaultOptions
+				)
+			}
+
 			SmartObject.getRelevantOptions=function(options){
 				return Object.assign(
 					SmartProto.getRelevantOptions(options)
@@ -3504,6 +3516,18 @@
 				moveEvent:true    	//if false move() will use delete() and set(), else a custom 'move' event will be emitted
 				,smartReplace:true  //if true replace() will try to figure out changes to minimize # of events, else all will 
 							    	//just be deleted/set
+			}
+
+			/**
+			* Get the combined default options for SmartArray
+			* @return object
+			*/
+			SmartArray.prototype.getDefaultOptions=function(){
+				return Object.assign(
+					{}
+					,SmartProto.defaultOptions
+					,SmartArray.defaultOptions
+				)
 			}
 
 			SmartArray.getRelevantOptions=function(options){
