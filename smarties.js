@@ -1570,9 +1570,17 @@
 
 		function createSmartChild(key,data){
 
-			//Copy the options from this object (so they aren't ref'd together). 
-			var options=bu.copy(this._private.options);
-			 //^NOTE: this will also copy any options relating to the underlying BetterEvents
+			//Copy the options from this object (so they aren't ref'd together). However, there is an edge case 
+			//which we need to consider. this._private.options may contain options meant for other classes, eg. 
+			//BetterEvents or BetterLog, which may be complex objects with circular references (which is the case
+			//with BetterLog.appendLog). Therefore we only copy the properties meant for this class, the rest we
+			//leave live
+			{
+				let ownOptions=bu.subObj(this._private.options,Object.keys(this.getDefaultOptions()),'hasOwnDefinedProperty');
+				var options=Object.assign({},this._private.options,bu.copy(ownOptions));
+				 //2022-03-09: currently the only thing in need of real copy is ownOptions.meta, everything else is primitives
+			}
+			 	
 			
 			//meta can be specified per key, we only pass on that which is intended for that key/child
 			options.meta=getChildMeta.call(this,key);
