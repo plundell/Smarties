@@ -1264,7 +1264,8 @@
 		*
 		* @param mixed 	key 	String, number or array. Limited if @add!=undefined to number/array
 		* @param mixed 	value 	The value to set.
-		* @opt object 	event 	Any event passed in from external callers. If none is passed prepareEvent will create one
+		* @opt object 	event 	Object passed in from external callers which will be appended. If none is 
+		*						passed prepareEvent will create one
 		*
 		* @throws TypeError
 		* @return object 		The passed in $event or a newly created one. Will be emitted after setting. Contains secret
@@ -1909,19 +1910,17 @@
 		/*
 		* Call .set with an event object, and return that event
 		*
-		* @param object event       The event object that will be emitted AND returned. At least the prop .key should be set
-		* 	@param string|number|array   key
-		* 	@opt   any                   value     If undefined then this.delete(key) will be called               
+		* @param string|number|array   key
+		* @opt   any                   value               
 		*
 		*
-		* @return object 					The value after setting
+		* @return object 				The event object which would otherwise have been emitted
 		*/
-		SmartProto.prototype.setEvent=function(event){
-			//Make sure we have an object with at least a key
-			bu.checkProps(event,{key:['string','number']})
+		SmartProto.prototype.setAndGetEvent=function(key,value){
+			let event={};
 
 			//Call set like usual...
-			this.set(event.key,event.value,event);
+			this.set(key,value,event);
 
 			//Return the passed in event, which probably has been altered
 			return event;
